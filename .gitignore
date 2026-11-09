@@ -1,0 +1,9 @@
+# >>> AI Factory agents (managed by setup.py) >>>
+.github/agents/
+.aider/agents/
+CONVENTIONS.md
+.aider.conf.yml
+# <<< AI Factory agents <<<
+
+__pycache__/
+*.pyc
