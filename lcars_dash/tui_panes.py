@@ -544,7 +544,7 @@ class MonitorView(Navigable):
     def open(self) -> None:
         self.query_one("#mon-table").focus()
         if self.timer is None:
-            self.timer = self.set_interval(3, self._auto)
+            self.timer = self.set_interval(1, self._auto)
         self.action_refresh_now()
 
     def _auto(self) -> None:
@@ -580,7 +580,7 @@ class MonitorView(Navigable):
         if self.rows:
             t.move_cursor(row=min(keep, len(self.rows) - 1))
         n = sum(r["state"] == "WORKING" for r in self.rows)
-        self.say(f"{len(self.rows)} running session(s), {n} working  //  refreshes every 3 s  //  o: VS Code  r: refresh")
+        self.say(f"{len(self.rows)} running session(s), {n} working  //  refreshes every 1 s  //  o: VS Code  r: refresh")
 
     def action_code(self) -> None:
         t = self.query_one("#mon-table", DataTable)

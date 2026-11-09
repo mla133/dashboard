@@ -822,14 +822,14 @@ class MonitorPane(tk.Frame):
         self.text.focus_set()
         self.refresh()
         if self.job is None:
-            self.job = self.after(3000, self._auto)
+            self.job = self.after(1000, self._auto)
 
     def _auto(self) -> None:
         self.job = None
         if self.app.view != "monitor":
             return
         self.refresh()
-        self.job = self.after(3000, self._auto)
+        self.job = self.after(1000, self._auto)
 
     def refresh(self) -> None:
         if self.loading:
@@ -862,7 +862,7 @@ class MonitorPane(tk.Frame):
         t.configure(state="disabled")
         t.yview_moveto(top)
         n = sum(r["state"] == "WORKING" for r in rows)
-        self.status.configure(text=f"{len(rows)} running session(s), {n} working  //  refreshes every 3 s  //  r: refresh")
+        self.status.configure(text=f"{len(rows)} running session(s), {n} working  //  refreshes every 1 s  //  r: refresh")
 
 
 class Dashboard(tk.Tk):
@@ -1138,7 +1138,7 @@ class Dashboard(tk.Tk):
         "monitor": ("COPILOT MONITOR", [
             ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
             ("STATE", "WORKING (blue), WAITING? (orange: busy but silent 45 s+, maybe awaiting approval), IDLE"),
-            ("r", "Refresh now (auto-refreshes every 3 s)"),
+            ("r", "Refresh now (auto-refreshes every 1 s)"),
             ("Esc", "Return to the repo list"),
         ]),
         "usage": ("COPILOT USAGE", [

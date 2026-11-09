@@ -76,7 +76,7 @@ HELP = {
     "monitor": ("COPILOT MONITOR", [
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
         ("STATE", "WORKING (blue), WAITING? (orange: busy but silent 45 s+, maybe awaiting approval), IDLE"),
-        ("r", "Refresh now (auto-refreshes every 3 s)"),
+        ("r", "Refresh now (auto-refreshes every 1 s)"),
         ("o", "Open the session's folder in VS Code"),
         ("j / k", "Move"),
         ("Esc", "Return to the repo list"),

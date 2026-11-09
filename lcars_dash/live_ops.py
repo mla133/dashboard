@@ -86,7 +86,8 @@ def _tail_events(path: Path) -> list[tuple[str, float | None, str]]:
 def _state(events, now: float) -> tuple[str, str, float | None]:
     """(state, detail, seconds since last activity) from the newest meaningful event."""
     for typ, ts, line in reversed(events):
-        if typ in NOISE or typ.startswith("session.usage") or typ == "session.binary_asset":
+        # model.* and usage events are logged after assistant.turn_end too, so they say nothing about busy/idle
+        if typ in NOISE or typ.startswith(("session.usage", "model.")) or typ == "session.binary_asset":
             continue
         age = now - ts if ts else None
         if typ in ("assistant.turn_end", "session.task_complete", "session.idle", "abort"):
