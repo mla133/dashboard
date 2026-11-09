@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, RichLog, Static, TextArea
 
-from . import copilot_ops, live_ops, mindchuk_ops, outlook_ops
+from . import copilot_ops, live_ops, google_ops, mindchuk_ops, outlook_ops
 
 MARK = "\x01CWD\x01"
 
@@ -511,6 +511,7 @@ class SessionsView(ListTextView):
 
 class OutlookView(ListTextView):
     PREFIX = "ol"
+    NAME, ops, SOURCE = "OUTLOOK", outlook_ops, "Outlook"
     TITLE = "OUTLOOK  //  CALENDAR"
     BINDINGS = [Binding("v", "toggle_kind", "Mail/Calendar"), Binding("r", "reload", "Reload"),
                 Binding("a", "toggle_unread", "Unread only")]
@@ -534,9 +535,9 @@ class OutlookView(ListTextView):
 
     def action_reload(self) -> None:
         kind, keep = self.kind, self.selected_key()
-        self.query_one(".view-title", Static).update(f"OUTLOOK  //  {kind.upper()}")
-        self.say("Reading Outlook...")
-        fetch = (lambda: outlook_ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: outlook_ops.events(14))
+        self.query_one(".view-title", Static).update(f"{self.NAME}  //  {kind.upper()}")
+        self.say(f"Reading {self.SOURCE}...")
+        fetch = (lambda: self.ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: self.ops.events(14))
 
         def done(rows):
             if kind != self.kind:
@@ -574,7 +575,53 @@ class OutlookView(ListTextView):
                      f"Organizer: {r['organizer'] or '-'}\n\n{r['body']}")
         self.show_text(t)
 
-# ---------------------------------------------------------------- monitor
+
+class GoogleView(OutlookView):
+    PREFIX = "gm"
+    NAME, ops, SOURCE = "GMAIL", google_ops, "Google"
+    TITLE = "GMAIL  //  CALENDAR"
+    BINDINGS = [Binding("x", "archive", "Archive"), Binding("d", "trash", "Trash"),
+                Binding("u", "toggle_read", "Read/Unread"), Binding("e", "reply", "Reply draft")]
+
+    def current(self) -> dict | None:
+        k = self.selected_key()
+        return self.rows.get(k) if k and self.kind == "mail" else None
+
+    def act(self, fn, doing: str, drop: bool) -> None:
+        r = self.current()
+        if not r:
+            self.say("Select a message first (v switches to mail)")
+            return
+        self.say(doing)
+
+        def done(_res):
+            if drop:
+                self.action_reload()
+            self.say(f"{doing[:-3]} done")
+        self.bg(lambda: fn(r), done)
+
+    def action_archive(self) -> None:
+        self.act(lambda r: google_ops.archive(r["id"]), "Archiving...", True)
+
+    def action_trash(self) -> None:
+        r = self.current()
+        if not r:
+            return
+
+        def go(ok):
+            if ok:
+                self.act(lambda m: google_ops.trash(m["id"]), "Trashing...", True)
+        self.app.push_screen(ConfirmScreen("TRASH MESSAGE", f"Move to Trash?\n\n{r['subject']}"), go)
+
+    def action_toggle_read(self) -> None:
+        r = self.current()
+        if r:
+            r["unread"] = not r["unread"]
+            self.act(lambda m: google_ops.set_unread(m["id"], m["unread"]), "Updating...", False)
+            self.table.update_cell(r["id"], list(self.table.columns)[2], ("* " if r["unread"] else "  ") + r["subject"])
+
+    def action_reply(self) -> None:
+        self.act(google_ops.draft_reply, "Drafting reply (opens in Gmail)...", False)
 
 class MonitorView(Navigable):
     """Sparkline per running Copilot CLI session (events per 20 s over the last 10 minutes)."""

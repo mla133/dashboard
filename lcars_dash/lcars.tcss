@@ -16,6 +16,8 @@ Screen { background: $lc-black; color: $lc-peach; }
 #n-sessions { background: $lc-lavender; }
 #n-usage { background: $lc-blue; }
 #n-monitor { background: $lc-periwinkle; }
+#n-outlook { background: $lc-orange; }
+#n-google { background: $lc-peach; }
 #n-theme { background: $lc-periwinkle; }
 #n-help { background: $lc-blue; margin-bottom: 0; }
 #spacer { height: 1fr; background: $lc-lavender; margin-bottom: 1; }

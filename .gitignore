@@ -7,3 +7,5 @@ CONVENTIONS.md
 
 __pycache__/
 *.pyc
+client_secret.json
+google_token.json

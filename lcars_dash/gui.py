@@ -15,7 +15,7 @@ from tkinter import font as tkfont, messagebox, ttk
 from rich.style import Style
 from rich.text import Text
 
-from . import config, copilot_ops, git_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
+from . import config, copilot_ops, git_ops, google_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
 
@@ -697,11 +697,12 @@ class SessionsPane(tk.Frame):
 
 class OutlookPane(tk.Frame):
     """Read-only Outlook calendar (next 14 days) and inbox, via desktop Outlook."""
+    NAME, ops, SOURCE = "OUTLOOK", outlook_ops, "Outlook"
 
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, bg=BLACK)
         self.app, self.kind, self.unread_only, self.rows = app, "calendar", False, {}
-        self.title = tk.Label(self, text="OUTLOOK  //  CALENDAR", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
+        self.title = tk.Label(self, text=f"{self.NAME}  //  CALENDAR", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
         self.title.pack(fill="x")
         bar = tk.Frame(self, bg=BLACK, height=48)
         bar.pack(fill="x", pady=(0, 6))
@@ -777,9 +778,9 @@ class OutlookPane(tk.Frame):
 
     def reload(self) -> None:
         kind = self.kind
-        self.title.configure(text=f"OUTLOOK  //  {kind.upper()}")
-        self.say("Reading Outlook...")
-        fetch = (lambda: outlook_ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: outlook_ops.events(14))
+        self.title.configure(text=f"{self.NAME}  //  {kind.upper()}")
+        self.say(f"Reading {self.SOURCE}...")
+        fetch = (lambda: self.ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: self.ops.events(14))
 
         def done(rows):
             if kind != self.kind:
@@ -825,6 +826,62 @@ class OutlookPane(tk.Frame):
                             f"Organizer: {r['organizer'] or '-'}\n\n{r['body']}")
         v.configure(state="disabled")
         v.yview_moveto(0)
+
+
+class GooglePane(OutlookPane):
+    """Gmail inbox (archive, trash, mark unread, reply draft) and primary Google Calendar."""
+    NAME, ops, SOURCE = "GMAIL", google_ops, "Google"
+
+    def __init__(self, parent, app: "Dashboard"):
+        super().__init__(parent, app)
+        for k, fn in (("x", self.archive), ("d", self.trash), ("u", self.toggle_read), ("e", self.reply)):
+            for w in (self.tree, self.view):
+                w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+
+    def current(self) -> dict | None:
+        sel = self.tree.selection()
+        return self.rows.get(sel[0]) if sel and self.kind == "mail" else None
+
+    def act(self, fn, doing: str, drop: bool) -> None:
+        r = self.current()
+        if not r:
+            self.say("Select a message first (v switches to mail)")
+            return
+        self.say(doing)
+
+        def done(res):
+            if isinstance(res, Exception):
+                self.say(f"Error: {res}")
+                return
+            if drop and r["id"] in self.rows:
+                nxt = self.tree.next(r["id"]) or self.tree.prev(r["id"])
+                self.tree.delete(r["id"])
+                del self.rows[r["id"]]
+                if nxt:
+                    self.tree.selection_set(nxt)
+            self.say(f"{doing[:-3]} done")
+        self.app.run_bg(lambda: fn(r), done)
+
+    def archive(self) -> None:
+        self.act(lambda r: google_ops.archive(r["id"]), "Archiving...", True)
+
+    def trash(self) -> None:
+        r = self.current()
+        if r and messagebox.askyesno("Trash message", f"Move to Trash?\n\n{r['subject']}", parent=self):
+            self.act(lambda m: google_ops.trash(m["id"]), "Trashing...", True)
+
+    def toggle_read(self) -> None:
+        r = self.current()
+        if not r:
+            return
+        r["unread"] = not r["unread"]
+        self.act(lambda m: google_ops.set_unread(m["id"], m["unread"]), "Updating...", False)
+        vals = list(self.tree.item(r["id"], "values"))
+        vals[2] = ("* " if r["unread"] else "") + r["subject"]
+        self.tree.item(r["id"], values=vals)
+
+    def reply(self) -> None:
+        self.act(google_ops.draft_reply, "Drafting reply (opens in Gmail)...", False)
 
 
 class UsagePane(tk.Frame):
@@ -1131,7 +1188,7 @@ class Dashboard(tk.Tk):
                ("TERMINAL\n[F2 / T]", PERIWINKLE, self.show_terminal),
                ("MINDCHUK\n[F3 / M]", PEACH, self.show_mindchuk), ("SESSIONS\n[F6 / S]", LAVENDER, self.show_sessions),
                ("USAGE\n[F7 / U]", BLUE, self.show_usage), ("MONITOR\n[F9 / W]", PERIWINKLE, self.show_monitor),
-               ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook))
+               ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook), ("GMAIL\n[F11 / I]", PEACH, self.show_google))
         self.nav_pills = []
         for text, color, cmd in nav:
             p = Pill(side, text, color, cmd, height=70)
@@ -1154,9 +1211,10 @@ class Dashboard(tk.Tk):
         self.usage = UsagePane(self.content, self)
         self.monitor = MonitorPane(self.content, self)
         self.outlook = OutlookPane(self.content, self)
+        self.google = GooglePane(self.content, self)
         self.panes = {"status": main, "terminal": self.terminal, "mindchuk": self.mindchuk,
                       "sessions": self.sessions, "usage": self.usage, "monitor": self.monitor,
-                      "outlook": self.outlook}
+                      "outlook": self.outlook, "google": self.google}
         self.list_title = tk.Label(main, text="SOFTWAREDEVELOPMENT", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
         self.list_title.pack(fill="x")
         self.list_frame = RoundFrame(main, PERIWINKLE, height=300)
@@ -1230,6 +1288,8 @@ class Dashboard(tk.Tk):
         on("<F9>", self.show_monitor)
         on("<F10>", self.show_outlook)
         on("<Key-o>", self.show_outlook)
+        on("<F11>", self.show_google)
+        on("<Key-i>", self.show_google)
         on("<Key-w>", self.show_monitor)
         on("<Key-s>", self.show_sessions)
         on("<Key-u>", self.show_usage)
@@ -1287,6 +1347,18 @@ class Dashboard(tk.Tk):
             ("r", "Reload from desktop Outlook (read-only)"),
             ("l / h", "Focus the details / the list"),
         ]),
+        "google": ("GMAIL / CALENDAR", [
+            ("j / k, g / G", "Move through events or messages (or scroll the details)"),
+            ("v", "Switch between Calendar (next 14 days, primary) and Mail (inbox)"),
+            ("a", "Mail: show unread only"),
+            ("x", "Mail: archive the selected message"),
+            ("d", "Mail: move to Trash (asks first; recoverable in Gmail for 30 days)"),
+            ("u", "Mail: toggle read / unread"),
+            ("e", "Mail: create a reply DRAFT and open it in Gmail (nothing is sent)"),
+            ("r", "Reload from Google"),
+            ("Tab / l / h", "Switch between the list and the details"),
+            ("(setup)", "~/.lcars_dash/client_secret.json; first use opens a browser to sign in"),
+        ]),
         "sessions": ("COPILOT SESSIONS", [
             ("j / k, g / G", "Move through sessions (or scroll the details)"),
             ("l / h", "Focus the details / the list"),
@@ -1340,7 +1412,7 @@ class Dashboard(tk.Tk):
     GLOBAL_HELP = [
         ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos (under ~/HomeDev)"), ("F2 / t", "Terminal"), ("F3 / m", "Mindchuk"),
         ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"), ("F9 / w", "Monitor running Copilot sessions"),
-        ("F10 / o", "Outlook mail and calendar"),
+        ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
         ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
         ("q", "Quit (not while typing in the terminal)"),
     ]
@@ -1426,6 +1498,10 @@ class Dashboard(tk.Tk):
     def show_mindchuk(self) -> None:
         self.switch("mindchuk")
         self.mindchuk.open()
+
+    def show_google(self) -> None:
+        self.switch("google")
+        self.google.open()
 
     def show_outlook(self) -> None:
         self.switch("outlook")

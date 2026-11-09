@@ -17,7 +17,7 @@ from textual.widgets.option_list import Option
 from . import config, copilot_ops, git_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
-from .tui_panes import (HelpScreen, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView,
+from .tui_panes import (HelpScreen, GoogleView, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView,
                         UsageView, move)
 
 HOMEDEV = Path.home() / "HomeDev"
@@ -70,6 +70,19 @@ HELP = {
         ("r", "Reload from desktop Outlook (read-only; Outlook must be installed)"),
         ("l / h", "Focus details / list"),
         ("Esc", "Back to the repo list"),
+    ]),
+    "google": ("GMAIL / CALENDAR", [
+        ("j / k, g / G", "Move through events or messages (or scroll the details)"),
+        ("v", "Switch between Calendar (next 14 days, primary) and Mail (inbox)"),
+        ("a", "Mail: show unread only"),
+        ("x", "Mail: archive the selected message"),
+        ("d", "Mail: move to Trash (asks first; recoverable in Gmail for 30 days)"),
+        ("u", "Mail: toggle read / unread"),
+        ("e", "Mail: create a reply DRAFT and open it in Gmail (nothing is sent)"),
+        ("r", "Reload from Google"),
+        ("Tab / l / h", "Switch between the list and the details"),
+        ("Esc", "Back to the repo list"),
+        ("(setup)", "~/.lcars_dash/client_secret.json; first use opens a browser to sign in"),
     ]),
     "sessions": ("COPILOT SESSIONS", [
         ("j / k, g / G", "Move through sessions (or scroll the details)"),
@@ -124,7 +137,7 @@ HELP = {
 GLOBAL_HELP = [
     ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos"), ("F2 / t", "Terminal"),
     ("F3 / m", "Mindchuk"), ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"),
-    ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"),
+    ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
     ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
     ("q", "Quit (not while typing in the terminal)"),
 ]
@@ -202,6 +215,7 @@ class StatusView(Vertical):
         Binding("u", "app.show_usage", "Usage"),
         Binding("w", "app.show_monitor", "Monitor"),
         Binding("o", "app.show_outlook", "Outlook"),
+        Binding("i", "app.show_google", "Gmail"),
         Binding("c", "app.cycle_theme", "Theme", show=False),
         Binding("question_mark", "app.show_help", "Help", show=False),
         Binding("enter,l", "app.open_detail", "Open", show=False),
@@ -238,6 +252,7 @@ class LcarsDash(App):
         Binding("f8", "show_homedev", show=False),
         Binding("f9", "show_monitor", show=False),
         Binding("f10", "show_outlook", show=False),
+        Binding("f11", "show_google", show=False),
         Binding("ctrl+c", "interrupt", show=False, priority=True),
     ]
 
@@ -304,6 +319,7 @@ class LcarsDash(App):
                 yield NavBlock("USAGE\n[F7 / U]", "show_usage", id="n-usage", classes="block")
                 yield NavBlock("MONITOR\n[F9 / W]", "show_monitor", id="n-monitor", classes="block")
                 yield NavBlock("OUTLOOK\n[F10 / O]", "show_outlook", id="n-outlook", classes="block")
+                yield NavBlock("GMAIL\n[F11 / I]", "show_google", id="n-google", classes="block")
                 yield Static("", id="spacer")
                 yield NavBlock("", "cycle_theme", id="n-theme", classes="block")
                 yield NavBlock("HELP\n[F4 / ?]", "show_help", id="n-help", classes="block")
@@ -315,6 +331,7 @@ class LcarsDash(App):
                 yield UsageView(id="v-usage")
                 yield MonitorView(id="v-monitor")
                 yield OutlookView(id="v-outlook")
+                yield GoogleView(id="v-google")
         yield Static("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  e explorer  p copilot  "
                      "s sessions  u usage  ? help  q quit", id="statusbar")
         yield Footer()
@@ -377,7 +394,11 @@ class LcarsDash(App):
 
     def action_show_outlook(self) -> None:
         self._switch("outlook")
-        self.query_one(OutlookView).open()
+        self.query_one("#v-outlook", OutlookView).open()
+
+    def action_show_google(self) -> None:
+        self._switch("google")
+        self.query_one(GoogleView).open()
 
     def action_show_monitor(self) -> None:
         self._switch("monitor")
