@@ -744,25 +744,27 @@ class UsageView(Navigable):
         calls = sum(r[2] for r in u["per_day"])
         toks = sum(r[3] + r[4] for r in u["per_day"])
         reqs = sum(r[5] for r in u["per_day"])
+        aic = sum(r[6] for r in u["per_day"])
         t.append(" SUMMARY \n", style=head)
         t.append(f"Sessions started: {u['sessions']}   Model calls: {calls:,}   "
-                 f"Tokens: {toks / 1e6:,.1f}M   Premium requests (multiplier sum): {reqs:,.0f}\n\n")
+                 f"Tokens: {toks / 1e6:,.1f}M   Premium requests (multiplier sum): {reqs:,.0f}\n"
+                 f"AIC: {aic:,.2f} in the last {u['days']} days   Today: {u['today_aic']:,.2f} AIC\n\n")
         t.append(" PER DAY (MODEL CALLS) \n", style=head)
         mx = max((r[2] for r in u["per_day"]), default=0)
-        t.append(f"{'DATE':<11}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}  \n", style=dim)
-        for d, ns, n, i, o, _m in u["per_day"]:
-            t.append(f"{d:<11}{ns:>5}{n:>8,}{(i + o) / 1e6:>9.1f}M  ")
+        t.append(f"{'DATE':<11}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'AIC':>11}  \n", style=dim)
+        for d, ns, n, i, o, _m, a in u["per_day"]:
+            t.append(f"{d:<11}{ns:>5}{n:>8,}{(i + o) / 1e6:>9.1f}M{a:>11,.2f}  ")
             t.append(bar(n, mx) + "\n", style=bar_style)
         t.append("\n BY MODEL \n", style=head)
-        t.append(f"{'MODEL':<26}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'REQS':>9}\n", style=dim)
-        for m, ns, n, i, o, r in u["per_model"]:
-            t.append(f"{(m or '?')[:25]:<26}{ns:>5}{n:>8,}{(i + o) / 1e6:>9.1f}M{r:>9,.0f}\n")
+        t.append(f"{'MODEL':<26}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'REQS':>9}{'AIC':>11}\n", style=dim)
+        for m, ns, n, i, o, r, a in u["per_model"]:
+            t.append(f"{(m or '?')[:25]:<26}{ns:>5}{n:>8,}{(i + o) / 1e6:>9.1f}M{r:>9,.0f}{a:>11,.2f}\n")
         t.append("\n BY FOLDER / REPO (TOP 15) \n", style=head)
-        t.append(f"{'FOLDER':<34}{'SESS':>5}{'CALLS':>8}\n", style=dim)
+        t.append(f"{'FOLDER':<34}{'SESS':>5}{'CALLS':>8}{'AIC':>11}\n", style=dim)
         folders = u["per_folder"][:15]
         mx = max((r[2] for r in folders), default=0)
-        for name, ns, n, _tok in folders:
-            t.append(f"{name[:33]:<34}{ns:>5}{n:>8,}  ")
+        for name, ns, n, _tok, a in folders:
+            t.append(f"{name[:33]:<34}{ns:>5}{n:>8,}{a:>11,.2f}  ")
             t.append(bar(n, mx, 28) + "\n", style=bar_style)
         self.query_one("#us-text", Static).update(t)
         self.query_one("#us-scroll").scroll_home(animate=False)

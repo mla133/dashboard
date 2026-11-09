@@ -958,25 +958,27 @@ class UsagePane(tk.Frame):
         calls = sum(r[2] for r in u["per_day"])
         toks = sum(r[3] + r[4] for r in u["per_day"])
         reqs = sum(r[5] for r in u["per_day"])
+        aic = sum(r[6] for r in u["per_day"])
         t.insert("end", " SUMMARY \n", "h")
         t.insert("end", f"Sessions started: {u['sessions']}   Model calls: {calls:,}   "
-                        f"Tokens: {toks / 1e6:,.1f}M   Premium requests (multiplier sum): {reqs:,.0f}\n\n")
+                        f"Tokens: {toks / 1e6:,.1f}M   Premium requests (multiplier sum): {reqs:,.0f}\n"
+                        f"AIC: {aic:,.2f} in the last {u['days']} days   Today: {u['today_aic']:,.2f} AIC\n\n")
         t.insert("end", " PER DAY (MODEL CALLS) \n", "h")
         mx = max((r[2] for r in u["per_day"]), default=0)
-        t.insert("end", f"{'DATE':<11}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}  \n", "dim")
-        for d, ns, c, i, o, _m in u["per_day"]:
-            t.insert("end", f"{d:<11}{ns:>5}{c:>8,}{(i + o) / 1e6:>9.1f}M  ")
+        t.insert("end", f"{'DATE':<11}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'AIC':>11}  \n", "dim")
+        for d, ns, c, i, o, _m, a in u["per_day"]:
+            t.insert("end", f"{d:<11}{ns:>5}{c:>8,}{(i + o) / 1e6:>9.1f}M{a:>11,.2f}  ")
             t.insert("end", bar(c, mx) + "\n", "bar")
         t.insert("end", "\n BY MODEL \n", "h")
-        t.insert("end", f"{'MODEL':<26}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'REQS':>9}\n", "dim")
-        for m, ns, c, i, o, r in u["per_model"]:
-            t.insert("end", f"{(m or '?')[:25]:<26}{ns:>5}{c:>8,}{(i + o) / 1e6:>9.1f}M{r:>9,.0f}\n")
+        t.insert("end", f"{'MODEL':<26}{'SESS':>5}{'CALLS':>8}{'TOKENS':>10}{'REQS':>9}{'AIC':>11}\n", "dim")
+        for m, ns, c, i, o, r, a in u["per_model"]:
+            t.insert("end", f"{(m or '?')[:25]:<26}{ns:>5}{c:>8,}{(i + o) / 1e6:>9.1f}M{r:>9,.0f}{a:>11,.2f}\n")
         t.insert("end", "\n BY FOLDER / REPO (TOP 15) \n", "h")
-        t.insert("end", f"{'FOLDER':<34}{'SESS':>5}{'CALLS':>8}\n", "dim")
+        t.insert("end", f"{'FOLDER':<34}{'SESS':>5}{'CALLS':>8}{'AIC':>11}\n", "dim")
         folders = u["per_folder"][:15]
         mx = max((r[2] for r in folders), default=0)
-        for name, ns, c, _tok in folders:
-            t.insert("end", f"{name[:33]:<34}{ns:>5}{c:>8,}  ")
+        for name, ns, c, _tok, a in folders:
+            t.insert("end", f"{name[:33]:<34}{ns:>5}{c:>8,}{a:>11,.2f}  ")
             t.insert("end", bar(c, mx, 28) + "\n", "bar")
         t.configure(state="disabled")
         t.yview_moveto(0)
@@ -1380,7 +1382,7 @@ class Dashboard(tk.Tk):
             ("r", "Reload"),
             ("j / k, g / G", "Scroll / top / bottom"),
             ("Esc", "Return to the repo list"),
-            ("(columns)", "SESS sessions, CALLS model calls, TOKENS in+out, REQS premium-request multiplier sum"),
+            ("(columns)", "SESS sessions, CALLS model calls, TOKENS in+out, REQS premium-request multiplier sum, AIC = total_nano_aiu / 1e9 (same as ~/scripts/aic_today.py; Today uses your local date)"),
         ]),
         "terminal": ("TERMINAL", [
             ("Enter", "Run the command"),

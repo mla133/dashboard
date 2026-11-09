@@ -106,7 +106,7 @@ HELP = {
         ("r", "Reload"),
         ("j / k, g / G", "Scroll / top / bottom"),
         ("Esc", "Return to the repo list"),
-        ("(columns)", "SESS sessions, CALLS model calls, TOKENS in+out, REQS premium-request multiplier sum"),
+        ("(columns)", "SESS sessions, CALLS model calls, TOKENS in+out, REQS premium-request multiplier sum, AIC = total_nano_aiu / 1e9 (same as ~/scripts/aic_today.py; Today uses your local date)"),
     ]),
     "terminal": ("TERMINAL", [
         ("Enter", "Run the command"),

@@ -67,26 +67,32 @@ def usage(days: int = 30) -> dict:
     with _conn() as c:
         per_day = c.execute(
             f"SELECT substr(u.created_at,1,10) d, count(DISTINCT u.session_id), count(*), "
-            f"coalesce(sum(u.input_tokens),0), coalesce(sum(u.output_tokens),0), coalesce(sum(u.request_multiplier),0) "
+            f"coalesce(sum(u.input_tokens),0), coalesce(sum(u.output_tokens),0), coalesce(sum(u.request_multiplier),0), "
+            f"coalesce(sum(u.total_nano_aiu),0) / 1e9 "
             f"FROM assistant_usage_events u WHERE {where} GROUP BY d ORDER BY d", (since,)).fetchall()
         per_model = c.execute(
             f"SELECT u.model, count(DISTINCT u.session_id), count(*), coalesce(sum(u.input_tokens),0), "
-            f"coalesce(sum(u.output_tokens),0), coalesce(sum(u.request_multiplier),0) "
+            f"coalesce(sum(u.output_tokens),0), coalesce(sum(u.request_multiplier),0), "
+            f"coalesce(sum(u.total_nano_aiu),0) / 1e9 "
             f"FROM assistant_usage_events u WHERE {where} GROUP BY u.model ORDER BY 3 DESC", (since,)).fetchall()
         per_folder = c.execute(
-            f"SELECT s.cwd, count(DISTINCT u.session_id), count(*), coalesce(sum(u.input_tokens + u.output_tokens),0) "
+            f"SELECT s.cwd, count(DISTINCT u.session_id), count(*), coalesce(sum(u.input_tokens + u.output_tokens),0), "
+            f"coalesce(sum(u.total_nano_aiu),0) / 1e9 "
             f"FROM assistant_usage_events u JOIN sessions s ON s.id = u.session_id WHERE {where} "
             f"GROUP BY s.cwd", (since,)).fetchall()
         n_sessions = c.execute("SELECT count(*) FROM sessions WHERE substr(created_at,1,10) >= date('now', ?)",
                                (since,)).fetchone()[0]
+        today = c.execute("SELECT coalesce(sum(total_nano_aiu),0) / 1e9 FROM assistant_usage_events "
+                          "WHERE substr(created_at,1,10) = ?", (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0]
     folders: dict[str, list] = {}  # merge cwd variants that differ only by case/slashes
-    for cwd, ns, calls, toks in per_folder:
+    for cwd, ns, calls, toks, aic in per_folder:
         key = Path(cwd or "?").name or str(cwd)
-        row = folders.setdefault(key.lower(), [key, 0, 0, 0])
+        row = folders.setdefault(key.lower(), [key, 0, 0, 0, 0.0])
         row[1] += ns
         row[2] += calls
         row[3] += toks
-    return {"days": days, "sessions": n_sessions, "per_day": per_day, "per_model": per_model,
+        row[4] += aic
+    return {"days": days, "sessions": n_sessions, "per_day": per_day, "per_model": per_model, "today_aic": today,
             "per_folder": sorted(folders.values(), key=lambda r: -r[2])}
 
 
