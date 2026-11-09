@@ -51,7 +51,6 @@ HELP = {
         ("r", "Refresh (git fetch + fast-forward pull) the selected repository"),
         ("a", "Refresh all repositories"),
         ("Ctrl+r", "Re-read status without touching the network"),
-        ("o", "Open the selected repo in VS Code"),
         ("e", "Open the selected repo in Explorer"),
         ("p", "Start Copilot (new window) in the selected repo"),
         ("x", "Run the repo's tests (auto-detected, or set in ~/.lcars_dash.json); result shown in TESTS"),
@@ -68,7 +67,6 @@ HELP = {
         ("l / h", "Focus the details / the list"),
         ("Enter", "Resume the session: new PowerShell window running copilot --resume in its folder"),
         ("p", "Start a new Copilot session in that session's folder"),
-        ("o", "Open that folder in VS Code"),
         ("a", "Toggle ALL REPOS / THIS REPO (the repo selected on the repo list)"),
         ("r", "Reload from ~/.copilot/session-store.db"),
         ("Esc", "Return to the repo list"),
@@ -77,7 +75,6 @@ HELP = {
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
         ("STATE", "WORKING (blue), WAITING? (orange: busy but silent 45 s+, maybe awaiting approval), IDLE"),
         ("r", "Refresh now (auto-refreshes every 1 s)"),
-        ("o", "Open the session's folder in VS Code"),
         ("j / k", "Move"),
         ("Esc", "Return to the repo list"),
     ]),
@@ -186,7 +183,6 @@ class StatusView(Vertical):
         Binding("ctrl+r", "app.rescan_status", "Re-read", show=False),
         Binding("b", "app.pick_branch", "Branch"),
         Binding("x", "app.run_tests", "Tests"),
-        Binding("o", "app.launch('vscode')", "Code"),
         Binding("e", "app.launch('explorer')", "Explorer"),
         Binding("p", "app.launch('copilot')", "Copilot"),
         Binding("S", "app.cycle_sort", "Sort", show=False),
@@ -305,7 +301,7 @@ class LcarsDash(App):
                 yield SessionsView(id="v-sessions")
                 yield UsageView(id="v-usage")
                 yield MonitorView(id="v-monitor")
-        yield Static("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  o code  e explorer  p copilot  "
+        yield Static("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  e explorer  p copilot  "
                      "s sessions  u usage  ? help  q quit", id="statusbar")
         yield Footer()
 
@@ -591,7 +587,7 @@ class LcarsDash(App):
         s = self._selected()
         if not s:
             return
-        fn = {"vscode": copilot_ops.open_vscode, "explorer": copilot_ops.open_explorer,
+        fn = {"explorer": copilot_ops.open_explorer,
               "copilot": copilot_ops.open_copilot}[what]
         try:
             self.say(fn(s.path))

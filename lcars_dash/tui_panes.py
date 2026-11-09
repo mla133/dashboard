@@ -430,7 +430,7 @@ class SessionsView(ListTextView):
     PREFIX = "ss"
     TITLE = "COPILOT SESSIONS  //  HISTORY"
     BINDINGS = [Binding("enter", "resume", "Resume"), Binding("p", "new_here", "New Copilot"),
-                Binding("o", "code", "VS Code"), Binding("r", "reload", "Reload"),
+                Binding("r", "reload", "Reload"),
                 Binding("a", "toggle_scope", "All/This repo")]
 
     def __init__(self, **kw):
@@ -509,17 +509,11 @@ class SessionsView(ListTextView):
         s = self.selected()
         self.say(copilot_ops.open_copilot(Path(s["cwd"]) if s and s["cwd"] else Path.home()))
 
-    def action_code(self) -> None:
-        s = self.selected()
-        if s and s["cwd"]:
-            self.say(copilot_ops.open_vscode(Path(s["cwd"])))
-
-
 # ---------------------------------------------------------------- monitor
 
 class MonitorView(Navigable):
     """Sparkline per running Copilot CLI session (events per 10 s over the last 10 minutes)."""
-    BINDINGS = [Binding("r", "refresh_now", "Refresh"), Binding("o", "code", "VS Code")]
+    BINDINGS = [Binding("r", "refresh_now", "Refresh")]
     STATE_COLOR = {"WORKING": "BLUE", "WAITING?": "ORANGE", "IDLE": "LAVENDER"}
 
     def __init__(self, **kw):
@@ -580,13 +574,7 @@ class MonitorView(Navigable):
         if self.rows:
             t.move_cursor(row=min(keep, len(self.rows) - 1))
         n = sum(r["state"] == "WORKING" for r in self.rows)
-        self.say(f"{len(self.rows)} running session(s), {n} working  //  refreshes every 1 s  //  o: VS Code  r: refresh")
-
-    def action_code(self) -> None:
-        t = self.query_one("#mon-table", DataTable)
-        if self.rows and 0 <= t.cursor_row < len(self.rows) and self.rows[t.cursor_row]["cwd"]:
-            self.say(copilot_ops.open_vscode(Path(self.rows[t.cursor_row]["cwd"])))
-
+        self.say(f"{len(self.rows)} running session(s), {n} working  //  refreshes every 1 s          //  r: refresh")
 
 # ---------------------------------------------------------------- usage
 

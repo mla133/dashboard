@@ -97,18 +97,6 @@ def _spawn(args: list[str], cwd: Path | None = None, console: bool = False) -> N
                      close_fds=True)
 
 
-def open_vscode(path: Path) -> str:
-    local = os.environ.get("LOCALAPPDATA", "")
-    candidates = [shutil.which("code"), shutil.which("code.cmd"),
-                  str(Path(local) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd"),
-                  r"C:\Program Files\Microsoft VS Code\bin\code.cmd"]
-    code = next((c for c in candidates if c and Path(c).exists()), None)
-    if not code:
-        return "VS Code not found (add 'code' to PATH)"
-    subprocess.Popen([code, str(path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    return f"Opened {path.name} in VS Code"
-
-
 def open_explorer(path: Path) -> str:
     os.startfile(str(path))  # noqa: S606 (Windows only)
     return f"Opened {path.name} in Explorer"

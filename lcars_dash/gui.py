@@ -546,7 +546,7 @@ class SessionsPane(tk.Frame):
         bar.pack(fill="x", pady=(0, 6))
         bar.pack_propagate(False)
         for text, color, cmd in (("RESUME [ENTER]", ORANGE, self.resume), ("NEW COPILOT [P]", PEACH, self.new_here),
-                                 ("VS CODE [O]", LAVENDER, self.code), ("RELOAD [R]", BLUE, self.reload),
+                                 ("RELOAD [R]", BLUE, self.reload),
                                  ("ALL REPOS [A]", PERIWINKLE, self.toggle_scope)):
             p = Pill(bar, text, color, cmd, width=10)
             p.pack(side="left", fill="both", expand=True, padx=(0, 6))
@@ -585,7 +585,7 @@ class SessionsPane(tk.Frame):
         self.view.bind("<FocusIn>", lambda e: (self.list_frame.highlight(False), self.text_frame.highlight(True)))
         self.view.bind("<Button-1>", lambda e: self.view.focus_set())
         self.tree.bind("<Double-1>", lambda e: self.resume())
-        for k, fn in (("Return", self.resume), ("p", self.new_here), ("o", self.code), ("r", self.reload),
+        for k, fn in (("Return", self.resume), ("p", self.new_here), ("r", self.reload),
                       ("a", self.toggle_scope), ("j", lambda: self.move(1)), ("k", lambda: self.move(-1)),
                       ("g", lambda: self.move("top")), ("G", lambda: self.move("bottom")),
                       ("l", lambda: self.view.focus_set()), ("h", lambda: self.tree.focus_set()),
@@ -684,11 +684,6 @@ class SessionsPane(tk.Frame):
     def new_here(self) -> None:
         s = self.selected()
         self.say(copilot_ops.open_copilot(Path(s["cwd"]) if s and s["cwd"] else Path.home()))
-
-    def code(self) -> None:
-        s = self.selected()
-        if s and s["cwd"]:
-            self.say(copilot_ops.open_vscode(Path(s["cwd"])))
 
 
 class UsagePane(tk.Frame):
@@ -1036,7 +1031,7 @@ class Dashboard(tk.Tk):
 
         self.status = Pill(self, "", BLUE, height=34)
         self.status.pack(fill="x", padx=8, pady=(0, 8))
-        self.say("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  o code  e explorer  p copilot  s sessions  u usage  ? help")
+        self.say("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  e explorer  p copilot  s sessions  u usage  ? help")
 
         self.tree.bind("<<TreeviewSelect>>", lambda e: self.on_select())
         self.tree.bind("<FocusIn>", lambda e: self._focus_ring(True))
@@ -1080,7 +1075,6 @@ class Dashboard(tk.Tk):
         on("<Key-r>", self.refresh_selected)
         on("<Key-a>", self.refresh_all)
         on("<Control-r>", self.load_all)
-        on("<Key-o>", self.launch_code)
         on("<Key-e>", self.launch_explorer)
         on("<Key-p>", self.launch_copilot)
         on("<Key-x>", self.run_tests)
@@ -1113,7 +1107,6 @@ class Dashboard(tk.Tk):
             ("r", "Refresh (git fetch + fast-forward pull) the selected repository"),
             ("a", "Refresh all repositories"),
             ("Ctrl+r", "Re-read status without touching the network"),
-            ("o", "Open the selected repo in VS Code"),
             ("e", "Open the selected repo in Explorer"),
             ("p", "Start Copilot (new window) in the selected repo"),
             ("x", "Run the repo's tests (auto-detected, or set in ~/.lcars_dash.json); result shown in TESTS"),
@@ -1130,7 +1123,6 @@ class Dashboard(tk.Tk):
             ("l / h", "Focus the details / the list"),
             ("Enter / double-click", "Resume the session: new PowerShell window running copilot --resume in its folder"),
             ("p", "Start a new Copilot session in that session's folder"),
-            ("o", "Open that folder in VS Code"),
             ("a", "Toggle ALL REPOS / THIS REPO (the repo selected on the repo list)"),
             ("r", "Reload from ~/.copilot/session-store.db"),
             ("Esc", "Return to the repo list"),
@@ -1284,9 +1276,6 @@ class Dashboard(tk.Tk):
                 self.say(fn(s.path))
             except OSError as e:
                 self.say(f"{s.name}: {e}")
-
-    def launch_code(self) -> None:
-        self._launch(copilot_ops.open_vscode)
 
     def launch_explorer(self) -> None:
         self._launch(copilot_ops.open_explorer)
