@@ -73,7 +73,7 @@ HELP = {
     ]),
     "monitor": ("COPILOT MONITOR", [
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
-        ("STATE", "WORKING (blue), WAITING? (orange: busy but silent 45 s+, maybe awaiting approval), IDLE"),
+        ("STATE", "● RUNNING (blue), ◐ WAITING FOR INPUT (orange: busy but silent 45 s+, maybe awaiting approval), ○ IDLE, ✖ ERROR (red: model call failed)"),
         ("r", "Refresh now (auto-refreshes every 1 s)"),
         ("j / k", "Move"),
         ("Esc", "Return to the repo list"),

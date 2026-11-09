@@ -786,7 +786,7 @@ class UsagePane(tk.Frame):
 
 class MonitorPane(tk.Frame):
     """One sparkline per running Copilot CLI session (events per 10 s over the last 10 minutes)."""
-    STATE_TAG = {"WORKING": "work", "WAITING?": "wait", "IDLE": "dim"}
+    STATE_TAG = {"RUNNING": "work", "WAITING FOR INPUT": "wait", "IDLE": "dim", "ERROR": "err"}
 
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, bg=BLACK)
@@ -808,7 +808,7 @@ class MonitorPane(tk.Frame):
         # pixel tab stops keep columns aligned even when block glyphs fall back to a wider font
         fnt = tkfont.Font(font=BODY_FONT)
         stops, x = [], 0
-        for w in (26 * fnt.measure("0"), 30 * fnt.measure("0"), 18 * fnt.measure("0"),
+        for w in (3 * fnt.measure("0"), 30 * fnt.measure("0"), 28 * fnt.measure("0"), 18 * fnt.measure("0"),
                   7 * fnt.measure("0"), 8 * fnt.measure("0"), 8 * fnt.measure("0")):
             x += w
             stops.append(x)
@@ -816,6 +816,7 @@ class MonitorPane(tk.Frame):
         self.text.configure(tabs=tuple(stops))
         self.text.tag_configure("work", foreground=BLUE)
         self.text.tag_configure("wait", foreground=ORANGE)
+        self.text.tag_configure("err", foreground="#ff3333")
         self.text.tag_configure("dim", foreground=LAVENDER)
         self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
         self.status.pack(fill="x")
@@ -859,20 +860,20 @@ class MonitorPane(tk.Frame):
         top = t.yview()[0]
         t.configure(state="normal")
         t.delete("1.0", "end")
-        t.insert("end", " STATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD → NOW)\n", "h")
+        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD → NOW)\n", "h")
         for r in rows:
             tag = self.STATE_TAG.get(r["state"], "dim")
             state = r["state"] + (f" {r['detail']}" if r["detail"] and r["state"] != "IDLE" else "")
-            t.insert("end", f" {state[:24]}\t", tag)
-            t.insert("end", f"{r['name'][:28]}\t{r['folder'][:16]}\t")
+            t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}\t{state[:29]}\t", tag)
+            t.insert("end", f"{r['name'][:26]}\t{r['folder'][:16]}\t")
             t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['pid']}\t")
             t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", tag)
         if not rows:
             t.insert("end", "\n No running Copilot CLI sessions found.\n", "dim")
         t.configure(state="disabled")
         t.yview_moveto(top)
-        n = sum(r["state"] == "WORKING" for r in rows)
-        self.status.configure(text=f"{len(rows)} running session(s), {n} working  //  refreshes every 1 s  //  r: refresh")
+        n = sum(r["state"] == "RUNNING" for r in rows)
+        self.status.configure(text=f"{len(rows)} session(s), {n} running  //  refreshes every 1 s  //  r: refresh")
 
 
 class Dashboard(tk.Tk):
@@ -1144,7 +1145,7 @@ class Dashboard(tk.Tk):
         ]),
         "monitor": ("COPILOT MONITOR", [
             ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
-            ("STATE", "WORKING (blue), WAITING? (orange: busy but silent 45 s+, maybe awaiting approval), IDLE"),
+            ("STATE", "● RUNNING (blue), ◐ WAITING FOR INPUT (orange: busy but silent 45 s+, maybe awaiting approval), ○ IDLE, ✖ ERROR (red: model call failed)"),
             ("r", "Refresh now (auto-refreshes every 1 s)"),
             ("Esc", "Return to the repo list"),
         ]),

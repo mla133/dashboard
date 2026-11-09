@@ -514,7 +514,7 @@ class SessionsView(ListTextView):
 class MonitorView(Navigable):
     """Sparkline per running Copilot CLI session (events per 10 s over the last 10 minutes)."""
     BINDINGS = [Binding("r", "refresh_now", "Refresh")]
-    STATE_COLOR = {"WORKING": "BLUE", "WAITING?": "ORANGE", "IDLE": "LAVENDER"}
+    STATE_COLOR = {"RUNNING": "BLUE", "WAITING FOR INPUT": "ORANGE", "IDLE": "LAVENDER", "ERROR": "RED"}
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -529,7 +529,7 @@ class MonitorView(Navigable):
 
     def on_mount(self) -> None:
         t = self.query_one("#mon-table", DataTable)
-        for label in ("STATE", "SESSION", "FOLDER", "ACTIVITY (OLD → NOW)", "LAST", "EVENTS", "PID"):
+        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD → NOW)", "LAST", "EVENTS", "PID"):
             t.add_column(label)
 
     def say(self, msg: str) -> None:
@@ -568,13 +568,15 @@ class MonitorView(Navigable):
         for r in self.rows:
             col = c[self.STATE_COLOR.get(r["state"], "LAVENDER")]
             state = r["state"] + (f" {r['detail']}" if r["detail"] and r["state"] != "IDLE" else "")
-            t.add_row(Text(state[:24], style=col), r["name"][:34], r["folder"][:22],
+            t.add_row(Text(live_ops.ICONS.get(r["state"], "?"), style=col), Text(state[:30], style=col),
+                      r["name"][:34], r["folder"][:22],
                       Text(live_ops.sparkline(r["counts"]), style=col),
                       live_ops.age_label(r["age"]), str(r["total"]), str(r["pid"]))
         if self.rows:
             t.move_cursor(row=min(keep, len(self.rows) - 1))
-        n = sum(r["state"] == "WORKING" for r in self.rows)
-        self.say(f"{len(self.rows)} running session(s), {n} working  //  refreshes every 1 s          //  r: refresh")
+        n = sum(r["state"] == "RUNNING" for r in self.rows)
+        self.say(f"{len(self.rows)} session(s), {n} running  //  refreshes every 1 s  //  r: refresh")
+
 
 # ---------------------------------------------------------------- usage
 

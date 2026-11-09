@@ -15,6 +15,8 @@ _TYPE = re.compile(r'^\{"type":"([^"]+)"')
 _TS = re.compile(r'"timestamp":"([^"]+)"\s*[,}]')
 _TOOL = re.compile(r'"toolName":"([^"]+)"')
 _STILL_ACTIVE = 259
+_STATUS = re.compile(r'"status":(\d+)')
+ICONS = {"IDLE": "○", "WAITING FOR INPUT": "◐", "RUNNING": "●", "ERROR": "✖"}
 
 
 def pid_alive(pid: int) -> bool:
@@ -85,11 +87,19 @@ def _tail_events(path: Path) -> list[tuple[str, float | None, str]]:
 
 def _state(events, now: float) -> tuple[str, str, float | None]:
     """(state, detail, seconds since last activity) from the newest meaningful event."""
+    recovered = False  # a successful model call newer than a failure means the failure was retried
     for typ, ts, line in reversed(events):
+        age = now - ts if ts else None
+        if typ == "model.model_call_success":
+            recovered = True
+        elif typ == "model.model_call_failure" and not recovered:
+            m = _STATUS.search(line)
+            return "ERROR", f"model {m.group(1)}" if m else "model call failed", age
+        elif typ == "session.error" or typ.endswith(".error"):
+            return "ERROR", typ, age
         # model.* and usage events are logged after assistant.turn_end too, so they say nothing about busy/idle
         if typ in NOISE or typ.startswith(("session.usage", "model.")) or typ == "session.binary_asset":
             continue
-        age = now - ts if ts else None
         if typ in ("assistant.turn_end", "session.task_complete", "session.idle", "abort"):
             return "IDLE", "", age
         detail = ""
@@ -97,8 +107,8 @@ def _state(events, now: float) -> tuple[str, str, float | None]:
             m = _TOOL.search(line)
             detail = m.group(1) if m else "tool"
         if age is not None and age > WAIT_AFTER_S:
-            return "WAITING?", detail, age
-        return "WORKING", detail or ("thinking" if typ.startswith(("model.", "assistant.", "user.")) else typ), age
+            return "WAITING FOR INPUT", detail, age
+        return "RUNNING", detail or ("thinking" if typ.startswith(("assistant.", "user.")) else typ), age
     return "IDLE", "", None
 
 
