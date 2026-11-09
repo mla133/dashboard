@@ -15,7 +15,7 @@ from tkinter import font as tkfont, messagebox, ttk
 from rich.style import Style
 from rich.text import Text
 
-from . import config, copilot_ops, git_ops, live_ops, mindchuk_ops, panels, tests_ops
+from . import config, copilot_ops, git_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
 
@@ -686,6 +686,137 @@ class SessionsPane(tk.Frame):
         self.say(copilot_ops.open_copilot(Path(s["cwd"]) if s and s["cwd"] else Path.home()))
 
 
+class OutlookPane(tk.Frame):
+    """Read-only Outlook calendar (next 14 days) and inbox, via desktop Outlook."""
+
+    def __init__(self, parent, app: "Dashboard"):
+        super().__init__(parent, bg=BLACK)
+        self.app, self.kind, self.unread_only, self.rows = app, "calendar", False, {}
+        self.title = tk.Label(self, text="OUTLOOK  //  CALENDAR", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
+        self.title.pack(fill="x")
+        bar = tk.Frame(self, bg=BLACK, height=48)
+        bar.pack(fill="x", pady=(0, 6))
+        bar.pack_propagate(False)
+        for text, color, cmd in (("MAIL / CALENDAR [V]", ORANGE, self.toggle_kind), ("RELOAD [R]", BLUE, self.reload),
+                                 ("UNREAD ONLY [A]", PERIWINKLE, self.toggle_unread)):
+            Pill(bar, text, color, cmd, width=10).pack(side="left", fill="both", expand=True, padx=(0, 6))
+        self.list_frame = RoundFrame(self, PERIWINKLE, height=240)
+        self.list_frame.pack(fill="both", expand=True)
+        holder = tk.Frame(self.list_frame, bg=BLACK)
+        self.tree = ttk.Treeview(holder, show="headings", selectmode="browse")
+        sb = ttk.Scrollbar(holder, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.list_frame.set_child(holder)
+        self.text_frame = RoundFrame(self, LAVENDER, height=300)
+        self.text_frame.pack(fill="both", expand=True, pady=(8, 0))
+        th = tk.Frame(self.text_frame, bg=BLACK)
+        self.view = tk.Text(th, bg=BLACK, fg=TEXT, font=BODY_FONT, wrap="word", bd=0, highlightthickness=0,
+                            state="disabled", cursor="arrow")
+        tsb = ttk.Scrollbar(th, command=self.view.yview)
+        self.view.configure(yscrollcommand=tsb.set)
+        tsb.pack(side="right", fill="y")
+        self.view.pack(side="left", fill="both", expand=True)
+        self.text_frame.set_child(th)
+        self.view.tag_configure("h", background=LAVENDER, foreground=BLACK, font=LABEL_FONT, spacing1=8, spacing3=2)
+        self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
+        self.status.pack(fill="x")
+
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self.on_select())
+        self.tree.bind("<FocusIn>", lambda e: (self.list_frame.highlight(True), self.text_frame.highlight(False)))
+        self.view.bind("<FocusIn>", lambda e: (self.list_frame.highlight(False), self.text_frame.highlight(True)))
+        self.view.bind("<Button-1>", lambda e: self.view.focus_set())
+        for k, fn in (("v", self.toggle_kind), ("r", self.reload), ("a", self.toggle_unread),
+                      ("j", lambda: self.move(1)), ("k", lambda: self.move(-1)),
+                      ("g", lambda: self.move("top")), ("G", lambda: self.move("bottom")),
+                      ("l", lambda: self.view.focus_set()), ("h", lambda: self.tree.focus_set()),
+                      ("Escape", app.show_status)):
+            for w in (self.tree, self.view):
+                w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+
+    def say(self, msg: str) -> None:
+        self.status.configure(text=msg)
+
+    def move(self, step) -> None:
+        if self.focus_get() is self.view:
+            self.view.yview_moveto(0 if step == "top" else 1) if isinstance(step, str) else \
+                self.view.yview_scroll(step * 2, "units")
+            return
+        rows = self.tree.get_children()
+        if not rows:
+            return
+        cur = self.tree.selection()
+        i = rows.index(cur[0]) if cur else 0
+        i = 0 if step == "top" else len(rows) - 1 if step == "bottom" else min(max(i + step, 0), len(rows) - 1)
+        self.tree.selection_set(rows[i])
+        self.tree.see(rows[i])
+
+    def open(self) -> None:
+        self.tree.focus_set()
+        self.reload()
+
+    def toggle_kind(self) -> None:
+        self.kind = "mail" if self.kind == "calendar" else "calendar"
+        self.reload()
+
+    def toggle_unread(self) -> None:
+        self.unread_only = not self.unread_only
+        if self.kind == "mail":
+            self.reload()
+
+    def reload(self) -> None:
+        kind = self.kind
+        self.title.configure(text=f"OUTLOOK  //  {kind.upper()}")
+        self.say("Reading Outlook...")
+        fetch = (lambda: outlook_ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: outlook_ops.events(14))
+
+        def done(rows):
+            if kind != self.kind:
+                return
+            if isinstance(rows, Exception):
+                self.say(f"Error: {rows}")
+                return
+            self.rows = {r["id"]: r for r in rows}
+            cols = (("a", "RECEIVED", 130), ("b", "FROM", 220), ("c", "SUBJECT", 700)) if kind == "mail" else \
+                   (("a", "WHEN", 150), ("b", "SUBJECT", 500), ("c", "LOCATION", 300))
+            self.tree.configure(columns=[c[0] for c in cols])
+            for cid, title, w in cols:
+                self.tree.heading(cid, text=title)
+                self.tree.column(cid, width=w, stretch=cid == "c" or (kind == "calendar" and cid == "b"))
+            self.tree.delete(*self.tree.get_children())
+            for r in rows:
+                if kind == "mail":
+                    vals = (r["received"].strftime("%m-%d %H:%M"), r["from"], ("* " if r["unread"] else "") + r["subject"])
+                else:
+                    when = r["start"].strftime("%a %m-%d ") + ("all day" if r["all_day"] else r["start"].strftime("%H:%M"))
+                    vals = (when, r["subject"], r["location"])
+                self.tree.insert("", "end", iid=r["id"], values=vals)
+            kids = self.tree.get_children()
+            if kids:
+                self.tree.selection_set(kids[0])
+            self.say(f"{len(rows)} {'message(s)' if kind == 'mail' else 'event(s) in the next 14 days'}"
+                     "  -  v mail/calendar  a unread only")
+        self.app.run_bg(fetch, done)
+
+    def on_select(self) -> None:
+        sel = self.tree.selection()
+        r = self.rows.get(sel[0]) if sel else None
+        if not r:
+            return
+        v = self.view
+        v.configure(state="normal")
+        v.delete("1.0", "end")
+        v.insert("end", f" {r['subject']} \n", "h")
+        if self.kind == "mail":
+            v.insert("end", f"From: {r['from']}\nReceived: {r['received']:%Y-%m-%d %H:%M}\n\n{r['body']}")
+        else:
+            v.insert("end", f"{r['start']:%a %Y-%m-%d %H:%M} - {r['end']:%H:%M}\nWhere: {r['location'] or '-'}\n"
+                            f"Organizer: {r['organizer'] or '-'}\n\n{r['body']}")
+        v.configure(state="disabled")
+        v.yview_moveto(0)
+
+
 class UsagePane(tk.Frame):
     """Copilot usage report: calls, tokens and premium requests per day, model and folder."""
     PERIODS = (7, 30, 90)
@@ -989,7 +1120,8 @@ class Dashboard(tk.Tk):
         nav = (("SOFTWAREDEVELOPMENT\n[F1 / D]", ORANGE, self.show_status), ("HOMEDEV\n[F8 / H]", PEACH, self.show_homedev),
                ("TERMINAL\n[F2 / T]", PERIWINKLE, self.show_terminal),
                ("MINDCHUK\n[F3 / M]", PEACH, self.show_mindchuk), ("SESSIONS\n[F6 / S]", LAVENDER, self.show_sessions),
-               ("USAGE\n[F7 / U]", BLUE, self.show_usage), ("MONITOR\n[F9 / W]", PERIWINKLE, self.show_monitor))
+               ("USAGE\n[F7 / U]", BLUE, self.show_usage), ("MONITOR\n[F9 / W]", PERIWINKLE, self.show_monitor),
+               ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook))
         self.nav_pills = []
         for text, color, cmd in nav:
             p = Pill(side, text, color, cmd, height=70)
@@ -1011,8 +1143,10 @@ class Dashboard(tk.Tk):
         self.sessions = SessionsPane(self.content, self)
         self.usage = UsagePane(self.content, self)
         self.monitor = MonitorPane(self.content, self)
+        self.outlook = OutlookPane(self.content, self)
         self.panes = {"status": main, "terminal": self.terminal, "mindchuk": self.mindchuk,
-                      "sessions": self.sessions, "usage": self.usage, "monitor": self.monitor}
+                      "sessions": self.sessions, "usage": self.usage, "monitor": self.monitor,
+                      "outlook": self.outlook}
         self.list_title = tk.Label(main, text="SOFTWAREDEVELOPMENT", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
         self.list_title.pack(fill="x")
         self.list_frame = RoundFrame(main, PERIWINKLE, height=300)
@@ -1064,7 +1198,7 @@ class Dashboard(tk.Tk):
     def _bind_keys(self) -> None:
         def on(key, fn):
             def handler(e):
-                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>"):
+                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>", "<F10>"):
                     return None  # let the active pane receive typing
                 fn()
                 return "break"
@@ -1084,6 +1218,8 @@ class Dashboard(tk.Tk):
         on("<F6>", self.show_sessions)
         on("<F7>", self.show_usage)
         on("<F9>", self.show_monitor)
+        on("<F10>", self.show_outlook)
+        on("<Key-o>", self.show_outlook)
         on("<Key-w>", self.show_monitor)
         on("<Key-s>", self.show_sessions)
         on("<Key-u>", self.show_usage)
@@ -1133,6 +1269,13 @@ class Dashboard(tk.Tk):
             ("(source)", "ASSEMBLA, GITHUB, LOCAL (no remote), ... taken from the git remote URL"),
             ("(roots)", "Folders scanned (2 levels deep): set \"roots\" in ~/.lcars_dash.json; default SoftwareDevelopment + HomeDev"),
             ("(HomeDev tab)", "F8 / h lists repos under ~/HomeDev with the same keys; the SoftwareDevelopment tab lists the rest"),
+        ]),
+        "outlook": ("OUTLOOK", [
+            ("j / k, g / G", "Move through events or messages (or scroll the details)"),
+            ("v", "Switch between Calendar (next 14 days) and Mail (inbox)"),
+            ("a", "Mail: show unread only"),
+            ("r", "Reload from desktop Outlook (read-only)"),
+            ("l / h", "Focus the details / the list"),
         ]),
         "sessions": ("COPILOT SESSIONS", [
             ("j / k, g / G", "Move through sessions (or scroll the details)"),
@@ -1187,6 +1330,7 @@ class Dashboard(tk.Tk):
     GLOBAL_HELP = [
         ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos (under ~/HomeDev)"), ("F2 / t", "Terminal"), ("F3 / m", "Mindchuk"),
         ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"), ("F9 / w", "Monitor running Copilot sessions"),
+        ("F10 / o", "Outlook mail and calendar"),
         ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
         ("q", "Quit (not while typing in the terminal)"),
     ]
@@ -1272,6 +1416,10 @@ class Dashboard(tk.Tk):
     def show_mindchuk(self) -> None:
         self.switch("mindchuk")
         self.mindchuk.open()
+
+    def show_outlook(self) -> None:
+        self.switch("outlook")
+        self.outlook.open()
 
     def show_sessions(self) -> None:
         self.switch("sessions")

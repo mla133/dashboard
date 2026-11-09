@@ -13,7 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, RichLog, Static, TextArea
 
-from . import copilot_ops, live_ops, mindchuk_ops
+from . import copilot_ops, live_ops, mindchuk_ops, outlook_ops
 
 MARK = "\x01CWD\x01"
 
@@ -508,6 +508,71 @@ class SessionsView(ListTextView):
     def action_new_here(self) -> None:
         s = self.selected()
         self.say(copilot_ops.open_copilot(Path(s["cwd"]) if s and s["cwd"] else Path.home()))
+
+class OutlookView(ListTextView):
+    PREFIX = "ol"
+    TITLE = "OUTLOOK  //  CALENDAR"
+    BINDINGS = [Binding("v", "toggle_kind", "Mail/Calendar"), Binding("r", "reload", "Reload"),
+                Binding("a", "toggle_unread", "Unread only")]
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.kind, self.unread_only, self.rows, self.token = "calendar", False, {}, 0
+
+    def open(self) -> None:
+        self.table.focus()
+        self.action_reload()
+
+    def action_toggle_kind(self) -> None:
+        self.kind = "mail" if self.kind == "calendar" else "calendar"
+        self.action_reload()
+
+    def action_toggle_unread(self) -> None:
+        self.unread_only = not self.unread_only
+        if self.kind == "mail":
+            self.action_reload()
+
+    def action_reload(self) -> None:
+        kind, keep = self.kind, self.selected_key()
+        self.query_one(".view-title", Static).update(f"OUTLOOK  //  {kind.upper()}")
+        self.say("Reading Outlook...")
+        fetch = (lambda: outlook_ops.mail(100, self.unread_only)) if kind == "mail" else (lambda: outlook_ops.events(14))
+
+        def done(rows):
+            if kind != self.kind:
+                return
+            self.rows = {r["id"]: r for r in rows}
+            t = self.table
+            t.clear(columns=True)
+            if kind == "mail":
+                t.add_columns("RECEIVED", "FROM", "SUBJECT")
+                for r in rows:
+                    sub = ("* " if r["unread"] else "  ") + r["subject"]
+                    t.add_row(r["received"].strftime("%m-%d %H:%M"), r["from"][:28], sub, key=r["id"])
+            else:
+                t.add_columns("WHEN", "SUBJECT", "LOCATION")
+                for r in rows:
+                    when = r["start"].strftime("%a %m-%d ") + ("all day" if r["all_day"] else r["start"].strftime("%H:%M"))
+                    t.add_row(when, r["subject"], r["location"][:30], key=r["id"])
+            self.reselect(keep)
+            self.say(f"{len(rows)} {'message(s)' if kind == 'mail' else 'event(s) in the next 14 days'}"
+                     "  -  v mail/calendar  a unread only")
+        self.bg(fetch, done)
+
+    def on_select(self) -> None:
+        k = self.selected_key()
+        r = self.rows.get(k) if k else None
+        if not r:
+            return
+        t = Text()
+        if self.kind == "mail":
+            t.append(f"{r['subject']}\n", style="bold")
+            t.append(f"From: {r['from']}\nReceived: {r['received']:%Y-%m-%d %H:%M}\n\n{r['body']}")
+        else:
+            t.append(f"{r['subject']}\n", style="bold")
+            t.append(f"{r['start']:%a %Y-%m-%d %H:%M} - {r['end']:%H:%M}\nWhere: {r['location'] or '-'}\n"
+                     f"Organizer: {r['organizer'] or '-'}\n\n{r['body']}")
+        self.show_text(t)
 
 # ---------------------------------------------------------------- monitor
 

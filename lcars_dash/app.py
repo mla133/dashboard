@@ -17,7 +17,7 @@ from textual.widgets.option_list import Option
 from . import config, copilot_ops, git_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
-from .tui_panes import (HelpScreen, MindchukView, MonitorView, SessionsView, TerminalView, UsageView, move)
+from .tui_panes import (HelpScreen, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView, UsageView, move)
 
 HOMEDEV = Path.home() / "HomeDev"
 COLUMNS = ("REPOSITORY", "VIEWING", "CHECKED OUT", "LAST UPDATED", "AGE", "BY", "SYNC", "HEALTH", "TESTS", "SOURCE")
@@ -61,6 +61,14 @@ HELP = {
         ("(source)", "ASSEMBLA, GITHUB, LOCAL (no remote), ... taken from the git remote URL"),
         ("(roots)", "Folders scanned (2 levels deep): set \"roots\" in ~/.lcars_dash.json; default SoftwareDevelopment + HomeDev"),
         ("(HomeDev tab)", "F8 / h lists repos under ~/HomeDev with the same keys; the SoftwareDevelopment tab lists the rest"),
+    ]),
+    "outlook": ("OUTLOOK", [
+        ("j / k, g / G", "Move through events or messages (or scroll the details)"),
+        ("v", "Switch between Calendar (next 14 days) and Mail (inbox)"),
+        ("a", "Mail: show unread only"),
+        ("r", "Reload from desktop Outlook (read-only; Outlook must be installed)"),
+        ("l / h", "Focus details / list"),
+        ("Esc", "Back to the repo list"),
     ]),
     "sessions": ("COPILOT SESSIONS", [
         ("j / k, g / G", "Move through sessions (or scroll the details)"),
@@ -115,7 +123,7 @@ HELP = {
 GLOBAL_HELP = [
     ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos"), ("F2 / t", "Terminal"),
     ("F3 / m", "Mindchuk"), ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"),
-    ("F9 / w", "Monitor running Copilot sessions"),
+    ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"),
     ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
     ("q", "Quit (not while typing in the terminal)"),
 ]
@@ -192,6 +200,7 @@ class StatusView(Vertical):
         Binding("s", "app.show_sessions", "Sessions"),
         Binding("u", "app.show_usage", "Usage"),
         Binding("w", "app.show_monitor", "Monitor"),
+        Binding("o", "app.show_outlook", "Outlook"),
         Binding("c", "app.cycle_theme", "Theme", show=False),
         Binding("question_mark", "app.show_help", "Help", show=False),
         Binding("enter,l", "app.open_detail", "Open", show=False),
@@ -227,6 +236,7 @@ class LcarsDash(App):
         Binding("f7", "show_usage", show=False),
         Binding("f8", "show_homedev", show=False),
         Binding("f9", "show_monitor", show=False),
+        Binding("f10", "show_outlook", show=False),
         Binding("ctrl+c", "interrupt", show=False, priority=True),
     ]
 
@@ -292,6 +302,7 @@ class LcarsDash(App):
                 yield NavBlock("SESSIONS\n[F6 / S]", "show_sessions", id="n-sessions", classes="block")
                 yield NavBlock("USAGE\n[F7 / U]", "show_usage", id="n-usage", classes="block")
                 yield NavBlock("MONITOR\n[F9 / W]", "show_monitor", id="n-monitor", classes="block")
+                yield NavBlock("OUTLOOK\n[F10 / O]", "show_outlook", id="n-outlook", classes="block")
                 yield Static("", id="spacer")
                 yield NavBlock("", "cycle_theme", id="n-theme", classes="block")
                 yield NavBlock("HELP\n[F4 / ?]", "show_help", id="n-help", classes="block")
@@ -302,6 +313,7 @@ class LcarsDash(App):
                 yield SessionsView(id="v-sessions")
                 yield UsageView(id="v-usage")
                 yield MonitorView(id="v-monitor")
+                yield OutlookView(id="v-outlook")
         yield Static("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  e explorer  p copilot  "
                      "s sessions  u usage  ? help  q quit", id="statusbar")
         yield Footer()
@@ -361,6 +373,10 @@ class LcarsDash(App):
     def action_show_usage(self) -> None:
         self._switch("usage")
         self.query_one(UsageView).open()
+
+    def action_show_outlook(self) -> None:
+        self._switch("outlook")
+        self.query_one(OutlookView).open()
 
     def action_show_monitor(self) -> None:
         self._switch("monitor")
