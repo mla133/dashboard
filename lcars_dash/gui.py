@@ -10,7 +10,7 @@ import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import font as tkfont, messagebox, ttk
 
 from rich.style import Style
 from rich.text import Text
@@ -804,7 +804,16 @@ class MonitorPane(tk.Frame):
         self.text.pack(side="left", fill="both", expand=True)
         self.frame.set_child(th)
         self.frame.highlight(True)
-        self.text.tag_configure("h", background=LAVENDER, foreground=BLACK, font=LABEL_FONT, spacing1=8, spacing3=2)
+        self.text.tag_configure("h", background=LAVENDER, foreground=BLACK, font=BODY_FONT, spacing1=8, spacing3=2)
+        # pixel tab stops keep columns aligned even when block glyphs fall back to a wider font
+        fnt = tkfont.Font(font=BODY_FONT)
+        stops, x = [], 0
+        for w in (26 * fnt.measure("0"), 30 * fnt.measure("0"), 18 * fnt.measure("0"),
+                  7 * fnt.measure("0"), 8 * fnt.measure("0"), 8 * fnt.measure("0")):
+            x += w
+            stops.append(x)
+        self.tab_end = x
+        self.text.configure(tabs=tuple(stops))
         self.text.tag_configure("work", foreground=BLUE)
         self.text.tag_configure("wait", foreground=ORANGE)
         self.text.tag_configure("dim", foreground=LAVENDER)
@@ -839,19 +848,25 @@ class MonitorPane(tk.Frame):
                 self.render(rows)
         self.app.run_bg(live_ops.snapshot, done)
 
+    def bars(self) -> int:
+        """Newest bars that fit in the visible width (the sparkline is the last column)."""
+        left = self.tab_end
+
+        return min(60, max(10, (self.text.winfo_width() - left - 40) // 8))
+
     def render(self, rows: list[dict]) -> None:
         t = self.text
         top = t.yview()[0]
         t.configure(state="normal")
         t.delete("1.0", "end")
-        t.insert("end", f" {'STATE':<26}{'SESSION':<36}{'FOLDER':<22}{'ACTIVITY (OLD → NOW)':<62}{'LAST':>6}{'EVENTS':>8}{'PID':>8} \n", "h")
+        t.insert("end", " STATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD → NOW)\n", "h")
         for r in rows:
             tag = self.STATE_TAG.get(r["state"], "dim")
             state = r["state"] + (f" {r['detail']}" if r["detail"] and r["state"] != "IDLE" else "")
-            t.insert("end", f" {state[:24]:<26}", tag)
-            t.insert("end", f"{r['name'][:34]:<36}{r['folder'][:20]:<22}")
-            t.insert("end", f"{live_ops.sparkline(r['counts']):<62}", tag)
-            t.insert("end", f"{live_ops.age_label(r['age']):>6}{r['total']:>8}{r['pid']:>8}\n")
+            t.insert("end", f" {state[:24]}\t", tag)
+            t.insert("end", f"{r['name'][:28]}\t{r['folder'][:16]}\t")
+            t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['pid']}\t")
+            t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", tag)
         if not rows:
             t.insert("end", "\n No running Copilot CLI sessions found.\n", "dim")
         t.configure(state="disabled")
