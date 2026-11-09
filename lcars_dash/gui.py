@@ -68,6 +68,13 @@ def round_rect(c: tk.Canvas, x1, y1, x2, y2, r, **kw):
     return c.create_polygon(pts, smooth=True, **kw)
 
 
+def bind_tab(top: tk.Widget, bottom: tk.Widget) -> None:
+    """Tab / Shift+Tab toggle focus between a list and its text pane (a Text widget would otherwise swallow Tab)."""
+    for src, dst in ((top, bottom), (bottom, top)):
+        for key in ("<Tab>", "<Shift-Tab>", "<ISO_Left_Tab>"):
+            src.bind(key, lambda e, d=dst: (d.focus_set(), "break")[1])
+
+
 class Pill(tk.Canvas):
     """Filled rounded label/button."""
 
@@ -411,6 +418,7 @@ class MindchukPane(tk.Frame):
                       ("<Escape>", app.show_status)):
             for w in (self.tree, self.view):
                 w.bind(k if k.startswith("<") else f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+        bind_tab(self.tree, self.view)
 
     # ---- helpers ----
     def say(self, msg: str) -> None:
@@ -592,6 +600,7 @@ class SessionsPane(tk.Frame):
                       ("Escape", app.show_status)):
             for w in (self.tree, self.view):
                 w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+        bind_tab(self.tree, self.view)
 
     def say(self, msg: str) -> None:
         self.status.configure(text=msg)
@@ -734,6 +743,7 @@ class OutlookPane(tk.Frame):
                       ("Escape", app.show_status)):
             for w in (self.tree, self.view):
                 w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+        bind_tab(self.tree, self.view)
 
     def say(self, msg: str) -> None:
         self.status.configure(text=msg)

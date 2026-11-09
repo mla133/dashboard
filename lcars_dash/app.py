@@ -17,7 +17,8 @@ from textual.widgets.option_list import Option
 from . import config, copilot_ops, git_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
-from .tui_panes import (HelpScreen, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView, UsageView, move)
+from .tui_panes import (HelpScreen, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView,
+                        UsageView, move)
 
 HOMEDEV = Path.home() / "HomeDev"
 COLUMNS = ("REPOSITORY", "VIEWING", "CHECKED OUT", "LAST UPDATED", "AGE", "BY", "SYNC", "HEALTH", "TESTS", "SOURCE")
@@ -404,6 +405,14 @@ class LcarsDash(App):
             self.query_one("#detail").focus()
 
     def action_toggle_focus(self) -> None:
+        if self.current_view != "status":
+            # list + text views (Mindchuk, Sessions, Outlook): Tab flips between the list and the text pane
+            v = self.query_one(f"#v-{self.current_view}")
+            if isinstance(v, ListTextView):
+                (v.table if isinstance(self.focused, VerticalScroll) else v.query_one(f"#{v.PREFIX}-scroll")).focus()
+            else:
+                self.screen.focus_next()
+            return
         if isinstance(self.focused, DataTable):
             self.query_one("#detail").focus()
         else:
