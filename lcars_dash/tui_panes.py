@@ -512,9 +512,8 @@ class SessionsView(ListTextView):
 # ---------------------------------------------------------------- monitor
 
 class MonitorView(Navigable):
-    """Sparkline per running Copilot CLI session (events per 10 s over the last 10 minutes)."""
+    """Sparkline per running Copilot CLI session (events per 20 s over the last 10 minutes)."""
     BINDINGS = [Binding("r", "refresh_now", "Refresh")]
-    STATE_COLOR = {"RUNNING": "BLUE", "WAITING FOR INPUT": "ORANGE", "IDLE": "LAVENDER", "ERROR": "RED"}
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -523,13 +522,13 @@ class MonitorView(Navigable):
         self.timer = None
 
     def compose(self) -> ComposeResult:
-        yield Static("COPILOT MONITOR  //  RUNNING SESSIONS  //  LAST 10 MIN, 10 S PER BAR", classes="view-title")
+        yield Static("COPILOT MONITOR  //  RUNNING SESSIONS  //  LAST 10 MIN, 20 S PER BAR", classes="view-title")
         yield DataTable(id="mon-table", cursor_type="row", zebra_stripes=True)
         yield Static("", id="mon-status", classes="view-status")
 
     def on_mount(self) -> None:
         t = self.query_one("#mon-table", DataTable)
-        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD → NOW)", "LAST", "EVENTS", "PID"):
+        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD→NOW)", "LAST", "EVENTS", "PID"):
             t.add_column(label)
 
     def say(self, msg: str) -> None:
@@ -561,16 +560,15 @@ class MonitorView(Navigable):
         self.say(f"Error: {e}")
 
     def render_rows(self) -> None:
-        c = self.app.colors
         t = self.query_one("#mon-table", DataTable)
         keep = t.cursor_row
         t.clear()
         for r in self.rows:
-            col = c[self.STATE_COLOR.get(r["state"], "LAVENDER")]
-            state = r["state"] + (f" {r['detail']}" if r["detail"] and r["state"] != "IDLE" else "")
-            t.add_row(Text(live_ops.ICONS.get(r["state"], "?"), style=col), Text(state[:30], style=col),
+            mode_col = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
+            t.add_row(Text(live_ops.ICONS.get(r["state"], "?"), style=live_ops.ICON_COLOR.get(r["state"], "white")),
+                      Text(live_ops.state_text(r)[:35], style=mode_col),
                       r["name"][:34], r["folder"][:22],
-                      Text(live_ops.sparkline(r["counts"]), style=col),
+                      Text(live_ops.sparkline(r["counts"]), style=mode_col),
                       live_ops.age_label(r["age"]), str(r["total"]), str(r["pid"]))
         if self.rows:
             t.move_cursor(row=min(keep, len(self.rows) - 1))

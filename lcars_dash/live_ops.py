@@ -16,7 +16,14 @@ _TS = re.compile(r'"timestamp":"([^"]+)"\s*[,}]')
 _TOOL = re.compile(r'"toolName":"([^"]+)"')
 _STILL_ACTIVE = 259
 _STATUS = re.compile(r'"status":(\d+)')
+_KIND = re.compile(r'"permissionRequest":\{"kind":"(\w+)"')
+_MODE = re.compile(r'"agentMode":"(\w+)"')
 ICONS = {"IDLE": "○", "WAITING FOR INPUT": "◐", "RUNNING": "●", "ERROR": "✖"}
+ICON_COLOR = {"RUNNING": "#33cc66", "WAITING FOR INPUT": "#ffd633", "ERROR": "#ff3333", "IDLE": "#ffffff"}
+MODE_COLOR = {"plan": "#4d94ff", "autopilot": "#b266ff"}  # anything else is regular mode: white
+REGULAR_COLOR = "#ffffff"
+LABELS = {"tool.execution_complete": "tool finished", "permission.completed": "approved",
+          "user.message": "reading your message", "assistant.turn_start": "thinking", "assistant.message": "responding"}
 
 
 def pid_alive(pid: int) -> bool:
@@ -103,23 +110,38 @@ def _state(events, now: float) -> tuple[str, str, float | None]:
         if typ in ("assistant.turn_end", "session.task_complete", "session.idle", "abort"):
             return "IDLE", "", age
         detail = ""
+        if typ == "permission.requested":
+            m = _KIND.search(line)
+            return "WAITING FOR INPUT", f"approve {m.group(1)}" if m else "approval needed", age
         if typ == "tool.execution_start":
             m = _TOOL.search(line)
             detail = m.group(1) if m else "tool"
+            if detail in ("ask_user", "exit_plan_mode"):
+                return "WAITING FOR INPUT", "answer a question" if detail == "ask_user" else "review the plan", age
         if age is not None and age > WAIT_AFTER_S:
-            return "WAITING FOR INPUT", detail, age
-        return "RUNNING", detail or ("thinking" if typ.startswith(("assistant.", "user.")) else typ), age
+            return "WAITING FOR INPUT", f"silent {int(age)}s" + (f" after {detail}" if detail else ""), age
+        return "RUNNING", detail or LABELS.get(typ) or ("thinking" if typ.startswith(("assistant.", "user.")) else typ), age
     return "IDLE", "", None
 
 
-def snapshot(window_s: int = 600, bucket_s: int = 10, now: float | None = None) -> list[dict]:
+def _mode(events) -> str:
+    """plan / autopilot / interactive, from the newest event that records agentMode."""
+    for typ, _ts, line in reversed(events):
+        if typ in ("assistant.turn_start", "user.message"):
+            m = _MODE.search(line)
+            if m:
+                return m.group(1)
+    return "interactive"
+
+
+def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) -> list[dict]:
     """One row per running session: state, last activity and per-bucket event counts (oldest first)."""
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
     n = window_s // bucket_s
     rows = []
     for s in running():
         counts = [0] * n
-        state, detail, age = "IDLE", "", None
+        state, detail, age, mode = "IDLE", "", None, "interactive"
         try:
             events = _tail_events(s["dir"] / "events.jsonl")
             for typ, ts, _ in events:
@@ -129,14 +151,19 @@ def snapshot(window_s: int = 600, bucket_s: int = 10, now: float | None = None) 
                 if 0 <= i < n:
                     counts[n - 1 - i] += 1
             state, detail, age = _state(events, now)
+            mode = _mode(events)
         except OSError:
             pass
         cwd = s.get("cwd", "")
         rows.append({"id": s["id"], "pid": s["pid"], "name": s.get("name") or "(unnamed)",
                      "folder": Path(cwd).name if cwd else "?", "cwd": cwd, "state": state, "detail": detail,
-                     "age": age, "counts": counts, "total": sum(counts)})
+                     "mode": mode, "age": age, "counts": counts, "total": sum(counts)})
     rows.sort(key=lambda r: (r["age"] is None, r["age"] or 0))
     return rows
+
+
+def state_text(r: dict) -> str:
+    return r["state"] + (f": {r['detail']}" if r["detail"] else "")
 
 
 def sparkline(counts: list[int]) -> str:

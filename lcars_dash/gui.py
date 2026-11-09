@@ -785,13 +785,12 @@ class UsagePane(tk.Frame):
 
 
 class MonitorPane(tk.Frame):
-    """One sparkline per running Copilot CLI session (events per 10 s over the last 10 minutes)."""
-    STATE_TAG = {"RUNNING": "work", "WAITING FOR INPUT": "wait", "IDLE": "dim", "ERROR": "err"}
+    """One sparkline per running Copilot CLI session (events per 20 s over the last 10 minutes)."""
 
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, bg=BLACK)
         self.app, self.loading, self.job = app, False, None
-        tk.Label(self, text="COPILOT MONITOR  //  RUNNING SESSIONS  //  LAST 10 MIN, 10 S PER BAR", bg=BLACK, fg=ORANGE,
+        tk.Label(self, text="COPILOT MONITOR  //  RUNNING SESSIONS  //  LAST 10 MIN, 20 S PER BAR", bg=BLACK, fg=ORANGE,
                  font=LABEL_FONT, anchor="w").pack(fill="x")
         self.frame = RoundFrame(self, LAVENDER, height=500)
         self.frame.pack(fill="both", expand=True)
@@ -808,15 +807,16 @@ class MonitorPane(tk.Frame):
         # pixel tab stops keep columns aligned even when block glyphs fall back to a wider font
         fnt = tkfont.Font(font=BODY_FONT)
         stops, x = [], 0
-        for w in (3 * fnt.measure("0"), 30 * fnt.measure("0"), 28 * fnt.measure("0"), 18 * fnt.measure("0"),
+        for w in (3 * fnt.measure("0"), 36 * fnt.measure("0"), 28 * fnt.measure("0"), 18 * fnt.measure("0"),
                   7 * fnt.measure("0"), 8 * fnt.measure("0"), 8 * fnt.measure("0")):
             x += w
             stops.append(x)
         self.tab_end = x
         self.text.configure(tabs=tuple(stops))
-        self.text.tag_configure("work", foreground=BLUE)
-        self.text.tag_configure("wait", foreground=ORANGE)
-        self.text.tag_configure("err", foreground="#ff3333")
+        for state, col in live_ops.ICON_COLOR.items():
+            self.text.tag_configure(f"i_{state}", foreground=col)
+        for col in (*live_ops.MODE_COLOR.values(), live_ops.REGULAR_COLOR):
+            self.text.tag_configure(f"m_{col}", foreground=col)
         self.text.tag_configure("dim", foreground=LAVENDER)
         self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
         self.status.pack(fill="x")
@@ -853,21 +853,21 @@ class MonitorPane(tk.Frame):
         """Newest bars that fit in the visible width (the sparkline is the last column)."""
         left = self.tab_end
 
-        return min(60, max(10, (self.text.winfo_width() - left - 40) // 8))
+        return min(30, max(10, (self.text.winfo_width() - left - 40) // 8))
 
     def render(self, rows: list[dict]) -> None:
         t = self.text
         top = t.yview()[0]
         t.configure(state="normal")
         t.delete("1.0", "end")
-        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD → NOW)\n", "h")
+        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD→NOW)\n", "h")
         for r in rows:
-            tag = self.STATE_TAG.get(r["state"], "dim")
-            state = r["state"] + (f" {r['detail']}" if r["detail"] and r["state"] != "IDLE" else "")
-            t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}\t{state[:29]}\t", tag)
+            mode = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
+            t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}", f"i_{r['state']}")
+            t.insert("end", f"\t{live_ops.state_text(r)[:35]}\t", f"m_{mode}")
             t.insert("end", f"{r['name'][:26]}\t{r['folder'][:16]}\t")
             t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['pid']}\t")
-            t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", tag)
+            t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", f"m_{mode}")
         if not rows:
             t.insert("end", "\n No running Copilot CLI sessions found.\n", "dim")
         t.configure(state="disabled")
@@ -1144,8 +1144,9 @@ class Dashboard(tk.Tk):
             ("Esc", "Return to the repo list"),
         ]),
         "monitor": ("COPILOT MONITOR", [
-            ("(what)", "One row per running Copilot CLI session; bars = activity events per 10 s over the last 10 min (oldest → newest)"),
-            ("STATE", "● RUNNING (blue), ◐ WAITING FOR INPUT (orange: busy but silent 45 s+, maybe awaiting approval), ○ IDLE, ✖ ERROR (red: model call failed)"),
+            ("(what)", "One row per running Copilot CLI session; bars = activity events per 20 s over the last 10 min (oldest → newest)"),
+            ("STATE", "Icon: ● RUNNING green, ◐ WAITING FOR INPUT yellow (permission prompt, question, or silent 45 s+), ✖ ERROR red (model call failed), ○ IDLE white"),
+            ("(text colour)", "Mode: plan = blue, autopilot = purple, regular = white"),
             ("r", "Refresh now (auto-refreshes every 1 s)"),
             ("Esc", "Return to the repo list"),
         ]),
