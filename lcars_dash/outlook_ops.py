@@ -60,12 +60,12 @@ def trash(entry_id: str) -> None:
         raise OutlookError(str(e)) from e
 
 
-def events(days: int = 7) -> list[dict]:
+def events(days: int = 7, back: int = 0) -> list[dict]:
     try:
         items = _namespace().GetDefaultFolder(CALENDAR).Items
         items.IncludeRecurrences = True
         items.Sort("[Start]")
-        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=back)
         end = start + timedelta(days=days)
         fmt = "%m/%d/%Y %I:%M %p"
         found = items.Restrict(f"[Start] >= '{start.strftime(fmt)}' AND [Start] < '{end.strftime(fmt)}'")

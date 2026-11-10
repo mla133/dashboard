@@ -158,9 +158,9 @@ def _when(d: dict) -> tuple[datetime, bool]:
 
 
 @_wrap
-def events(days: int = 7) -> list[dict]:
+def events(days: int = 7, back: int = 0) -> list[dict]:
     svc = _service("calendar", "v3")
-    start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=back)
     resp = svc.events().list(calendarId="primary", timeMin=start.isoformat(), timeMax=(start + timedelta(days=days)).isoformat(),
                              singleEvents=True, orderBy="startTime", maxResults=250).execute()
     out = []

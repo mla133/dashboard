@@ -6,6 +6,7 @@ import queue
 import re
 import subprocess
 import threading
+import time
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -15,7 +16,7 @@ from tkinter import font as tkfont, messagebox, ttk
 from rich.style import Style
 from rich.text import Text
 
-from . import config, copilot_ops, git_ops, google_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
+from . import config, copilot_ops, git_ops, google_ops, home_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
 
@@ -1081,6 +1082,201 @@ class MonitorPane(tk.Frame):
         self.status.configure(text=f"{len(rows)} session(s), {n} running  //  refreshes every 1 s  //  r: refresh")
 
 
+class HomePane(tk.Frame):
+    """One-screen daily overview: monitor, today's usage, work-week calendars, inboxes and a Mindchuk quick entry."""
+    FONT = ("Consolas", 10)
+    STALE_S = 60
+
+    def __init__(self, parent, app: "Dashboard"):
+        super().__init__(parent, bg=BLACK)
+        self.app, self.loading, self.mon_job, self.last_load = app, False, None, 0.0
+        self.fnt = tkfont.Font(font=self.FONT)
+        self.data: dict[str, object] = {}
+        self.columnconfigure((0, 1), weight=1, uniform="col")
+        for r, w in enumerate((2, 3, 10, 5)):
+            self.rowconfigure(r, weight=w, uniform=None)
+        mon, fri = home_ops.week_range()
+        self.mon = self.panel("COPILOT MONITOR  //  RUNNING SESSIONS", LAVENDER, 0, 0, 2)
+        self.usage = self.panel("TODAY'S COPILOT USAGE", PERIWINKLE, 1, 0)
+        self.quick_frame = self.panel("MINDCHUK  //  QUICK ENTRY", PEACH, 1, 1, entry=True)
+        week = f"{mon:%m-%d} to {fri:%m-%d}"
+        self.cal = {"outlook": self.panel(f"OUTLOOK CALENDAR  //  {week}", ORANGE, 2, 0),
+                    "google": self.panel(f"GMAIL CALENDAR  //  {week}", PEACH, 2, 1)}
+        self.mail = {"outlook": self.panel("OUTLOOK INBOX  //  RECENT", ORANGE, 3, 0),
+                     "google": self.panel("GMAIL INBOX  //  RECENT", PEACH, 3, 1)}
+        self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
+        self.status.grid(row=4, column=0, columnspan=2, sticky="ew")
+        for t in (self.mon, self.usage, *self.cal.values(), *self.mail.values()):
+            for k, fn in (("r", self.reload), ("n", self.focus_entry)):
+                t.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+            t.bind("<Configure>", lambda e: self.after_idle(self.render_all))
+
+    def panel(self, title: str, color: str, row: int, col: int, span: int = 1, entry: bool = False):
+        f = tk.Frame(self, bg=BLACK)
+        f.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=(0, 6) if col == 0 and span == 1 else 0, pady=(0, 4))
+        tk.Label(f, text=title, bg=BLACK, fg=color, font=LABEL_FONT, anchor="w").pack(fill="x")
+        rf = RoundFrame(f, color, height=40)
+        rf.pack(fill="both", expand=True)
+        holder = tk.Frame(rf, bg=BLACK)
+        t = tk.Text(holder, bg=BLACK, fg=TEXT, font=self.FONT, wrap="word" if entry else "none", bd=0,
+                    highlightthickness=0, height=1, state="normal" if entry else "disabled",
+                    cursor="xterm" if entry else "arrow", insertbackground=ORANGE)
+        t.pack(fill="both", expand=True)
+        rf.set_child(holder)
+        for tag, col in (("h", ORANGE), ("today", PEACH), ("unread", ORANGE), ("dim", LAVENDER), ("err", RED),
+                         ("hdr", LAVENDER)):
+            t.tag_configure(tag, foreground=col)
+        t.tag_configure("hdr", background=LAVENDER, foreground=BLACK)
+        if entry:
+            self.entry = t
+            bar = tk.Frame(f, bg=BLACK, height=34)
+            bar.pack(fill="x", pady=(4, 0))
+            bar.pack_propagate(False)
+            Pill(bar, "ADD [CTRL+ENTER]", ORANGE, self.add_entry, width=190).pack(side="left", fill="y")
+            self.entry_status = tk.Label(bar, text="  Esc returns to the monitor", bg=BLACK, fg=BLUE, font=self.FONT, anchor="w")
+            self.entry_status.pack(side="left", fill="both", expand=True)
+            t.bind("<Control-Return>", lambda e: (self.add_entry(), "break")[1])
+            t.bind("<Escape>", lambda e: (self.mon.focus_set(), "break")[1])
+            t.bind("<Tab>", lambda e: (self.mon.focus_set(), "break")[1])
+        return t
+
+    def cols(self, t: tk.Text) -> int:
+        return max(30, t.winfo_width() // max(1, self.fnt.measure("0")) - 2)
+
+    def put(self, t: tk.Text, lines: list[tuple[str, str]]) -> None:
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        for tag, text in lines:
+            t.insert("end", text + "\n", tag)
+        t.configure(state="disabled")
+
+    def focus_entry(self) -> None:
+        self.entry.focus_set()
+
+    def add_entry(self) -> None:
+        text = self.entry.get("1.0", "end").strip()
+        if not text:
+            self.entry_status.configure(text="  Nothing to add")
+            return
+        self.entry_status.configure(text="  Sending to Mindchuk...")
+
+        def done(res):
+            if isinstance(res, Exception):
+                self.entry_status.configure(text=f"  Error: {res}")
+                return
+            self.entry.delete("1.0", "end")
+            self.entry_status.configure(text=f"  Added {str(res).strip()[:60]}")
+        self.app.run_bg(lambda: mindchuk_ops.add(text), done)
+
+    # ---------- data ----------
+    def open(self) -> None:
+        self.mon.focus_set()
+        self.refresh_monitor()
+        if time.time() - self.last_load > self.STALE_S:
+            self.reload()
+        if self.mon_job is None:
+            self.mon_job = self.after(2000, self._auto)
+
+    def _auto(self) -> None:
+        self.mon_job = None
+        if self.app.view != "home":
+            return
+        self.refresh_monitor()
+        if time.time() - self.last_load > 300:
+            self.reload()
+        self.mon_job = self.after(2000, self._auto)
+
+    def refresh_monitor(self) -> None:
+        if self.loading:
+            return
+        self.loading = True
+
+        def done(rows):
+            self.loading = False
+            self.data["monitor"] = rows
+            self.render_monitor()
+        self.app.run_bg(live_ops.snapshot, done)
+
+    def reload(self) -> None:
+        self.last_load = time.time()
+        self.status.configure(text="Loading Outlook / Gmail / usage...")
+        jobs = {"usage": copilot_ops.today_usage,
+                "cal_outlook": lambda: home_ops.week_events(outlook_ops), "cal_google": lambda: home_ops.week_events(google_ops),
+                "mail_outlook": lambda: outlook_ops.mail(8), "mail_google": lambda: google_ops.mail(8)}
+        for key, fn in jobs.items():
+            def done(res, key=key):
+                self.data[key] = res
+                self.render_all()
+                self.status.configure(text="r reload  //  n quick entry  //  monitor refreshes every 2 s, the rest every 5 min")
+            self.app.run_bg(fn, done)
+
+    # ---------- render ----------
+    def render_all(self) -> None:
+        self.render_monitor()
+        self.render_usage()
+        for src in ("outlook", "google"):
+            self.render_cal(src)
+            self.render_mail(src)
+
+    def render_monitor(self) -> None:
+        t, rows = self.mon, self.data.get("monitor")
+        if rows is None:
+            return
+        if isinstance(rows, Exception):
+            return self.put(t, [("err", f"Error: {rows}")])
+        w = self.fnt.measure("0")
+        name_w = max([7] + [len(r["name"]) for r in rows]) + 2
+        x, stops = 0, []
+        for chars in (3, 28, name_w, 18, 6, 9, 8):
+            x += chars * w
+            stops.append(x)
+        t.configure(tabs=tuple(stops), state="normal")
+        t.delete("1.0", "end")
+        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tAIC\tPID\n", "hdr")
+        for tag, col in live_ops.ICON_COLOR.items():
+            t.tag_configure(f"i_{tag}", foreground=col)
+        for col in (*live_ops.MODE_COLOR.values(), live_ops.REGULAR_COLOR):
+            t.tag_configure(f"m_{col}", foreground=col)
+        for r in rows:
+            mode = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
+            t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}", f"i_{r['state']}")
+            t.insert("end", f"\t{live_ops.state_text(r)[:27]}\t", f"m_{mode}")
+            t.insert("end", f"{r['name']}\t{r['folder'][:17]}\t{live_ops.age_label(r['age'])}\t{r['aic']:,.2f}\t{r['pid']}\t")
+            t.insert("end", live_ops.sparkline(r["counts"][-20:]) + "\n", f"m_{mode}")
+        if not rows:
+            t.insert("end", "No running Copilot CLI sessions.\n", "dim")
+        t.configure(state="disabled")
+
+    def render_usage(self) -> None:
+        u = self.data.get("usage")
+        if u is None:
+            return
+        if isinstance(u, Exception):
+            return self.put(self.usage, [("err", f"Error: {u}")])
+        lines = [("h", f"{u['sessions']} session(s)  {u['calls']:,} calls  {u['tokens']:,} tokens"),
+                 ("today", f"AIC {u['aic']:,.2f}   =   ${u['aic'] / 100:,.2f}"),
+                 ("hdr", f"{'MODEL':<24}{'CALLS':>7}{'TOKENS':>11}{'AIC':>9}{'COST':>8}")]
+        for model, _, calls, toks, aic in u["models"]:
+            lines.append(("row", f"{live_ops.short(model or '?', 23):<24}{calls:>7}{toks:>11,}{aic:>9,.2f}{'$' + format(aic / 100, ',.2f'):>8}"))
+        if not u["models"]:
+            lines.append(("dim", "No Copilot activity yet today"))
+        self.put(self.usage, lines)
+
+    def render_cal(self, src: str) -> None:
+        ev = self.data.get(f"cal_{src}")
+        if ev is None:
+            return
+        t = self.cal[src]
+        self.put(t, [("err", f"Error: {ev}")] if isinstance(ev, Exception) else home_ops.calendar_lines(ev, self.cols(t)))
+
+    def render_mail(self, src: str) -> None:
+        rows = self.data.get(f"mail_{src}")
+        if rows is None:
+            return
+        t = self.mail[src]
+        self.put(t, [("err", f"Error: {rows}")] if isinstance(rows, Exception) else home_ops.mail_lines(rows, self.cols(t)))
+
+
 class Dashboard(tk.Tk):
     def __init__(self, roots: list[Path] | None = None):
         set_theme(load_saved_theme())
@@ -1104,6 +1300,7 @@ class Dashboard(tk.Tk):
         self._style()
         self._build()
         self._bind_keys()
+        self.show_home()
         self.after(100, self._pump)
         self.after(1000, self._tick)
         self._tick()
@@ -1191,18 +1388,18 @@ class Dashboard(tk.Tk):
         side = tk.Frame(body, bg=BLACK, width=220)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
-        nav = (("SOFTWAREDEVELOPMENT\n[F1 / D]", ORANGE, self.show_status), ("HOMEDEV\n[F8 / H]", PEACH, self.show_homedev),
+        nav = (("HOME\n[F12 / Z]", LAVENDER, self.show_home), ("SOFTWAREDEVELOPMENT\n[F1 / D]", ORANGE, self.show_status), ("HOMEDEV\n[F8 / H]", PEACH, self.show_homedev),
                ("TERMINAL\n[F2 / T]", PERIWINKLE, self.show_terminal),
                ("MINDCHUK\n[F3 / M]", PEACH, self.show_mindchuk), ("SESSIONS\n[F6 / S]", LAVENDER, self.show_sessions),
                ("USAGE\n[F7 / U]", BLUE, self.show_usage), ("MONITOR\n[F9 / W]", PERIWINKLE, self.show_monitor),
                ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook), ("GMAIL\n[F11 / I]", PEACH, self.show_google))
         self.nav_pills = []
         for text, color, cmd in nav:
-            p = Pill(side, text, color, cmd, height=70)
-            p.pack(fill="x", pady=(0, 6))
+            p = Pill(side, text, color, cmd, height=58)
+            p.pack(fill="x", pady=(0, 4))
             self.nav_pills.append(p)
-        Pill(side, "HELP\n[F4 / ?]", BLUE, self.show_help, height=70).pack(side="bottom", fill="x")
-        self.theme_pill = Pill(side, "", PERIWINKLE, self.cycle_theme, height=70)
+        Pill(side, "HELP\n[F4 / ?]", BLUE, self.show_help, height=58).pack(side="bottom", fill="x")
+        self.theme_pill = Pill(side, "", PERIWINKLE, self.cycle_theme, height=58)
         self.theme_pill.pack(side="bottom", fill="x", pady=(0, 6))
         self._label_theme()
         Pill(side, "", LAVENDER).pack(fill="both", expand=True, pady=(0, 6))
@@ -1219,9 +1416,10 @@ class Dashboard(tk.Tk):
         self.monitor = MonitorPane(self.content, self)
         self.outlook = OutlookPane(self.content, self)
         self.google = GooglePane(self.content, self)
+        self.home = HomePane(self.content, self)
         self.panes = {"status": main, "terminal": self.terminal, "mindchuk": self.mindchuk,
                       "sessions": self.sessions, "usage": self.usage, "monitor": self.monitor,
-                      "outlook": self.outlook, "google": self.google}
+                      "outlook": self.outlook, "google": self.google, "home": self.home}
         self.list_title = tk.Label(main, text="SOFTWAREDEVELOPMENT", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
         self.list_title.pack(fill="x")
         self.list_frame = RoundFrame(main, PERIWINKLE, height=300)
@@ -1273,11 +1471,13 @@ class Dashboard(tk.Tk):
     def _bind_keys(self) -> None:
         def on(key, fn):
             def handler(e):
-                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>", "<F10>"):
+                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>", "<F10>", "<F11>", "<F12>"):
                     return None  # let the active pane receive typing
                 fn()
                 return "break"
             self.bind(key, handler)
+        on("<F12>", self.show_home)
+        on("<Key-z>", self.show_home)
         on("<F1>", self.show_status)
         on("<Key-d>", self.show_status)
         on("<F8>", self.show_homedev)
@@ -1322,6 +1522,13 @@ class Dashboard(tk.Tk):
 
     # ---------- help ----------
     HELP = {
+        "home": ("HOME", [
+            ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, and a Mindchuk quick entry"),
+            ("r", "Reload usage, calendars and mail now (monitor refreshes every 2 s, the rest every 5 min)"),
+            ("n", "Focus the Mindchuk quick entry"),
+            ("Ctrl+Enter", "In the quick entry: send it to Mindchuk (or click ADD)"),
+            ("Esc / Tab", "In the quick entry: back to the monitor (hotkeys work there)"),
+        ]),
         "status": ("SOFTWAREDEVELOPMENT / HOMEDEV", [
             ("j / k, ↓ / ↑", "Move through repositories (or scroll the summary)"),
             ("click a header", "Sort by that column; click again to reverse (▲/▼ shows direction)"),
@@ -1419,7 +1626,7 @@ class Dashboard(tk.Tk):
         ]),
     }
     GLOBAL_HELP = [
-        ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos (under ~/HomeDev)"), ("F2 / t", "Terminal"), ("F3 / m", "Mindchuk"),
+        ("F12 / z", "HOME: one-screen daily overview (default)"), ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos (under ~/HomeDev)"), ("F2 / t", "Terminal"), ("F3 / m", "Mindchuk"),
         ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"), ("F9 / w", "Monitor running Copilot sessions"),
         ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
         ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
@@ -1507,6 +1714,10 @@ class Dashboard(tk.Tk):
     def show_mindchuk(self) -> None:
         self.switch("mindchuk")
         self.mindchuk.open()
+
+    def show_home(self) -> None:
+        self.switch("home")
+        self.home.open()
 
     def show_google(self) -> None:
         self.switch("google")

@@ -9,6 +9,7 @@ Screen { background: $lc-black; color: $lc-peach; }
 #sidebar { width: 24; }
 .block { height: 2; color: $lc-black; text-style: bold; padding: 0 1; margin-bottom: 1; }
 .block:hover { text-style: bold reverse; }
+#n-home { background: $lc-lavender; }
 #n-status { background: $lc-orange; }
 #n-homedev { background: $lc-peach; }
 #n-terminal { background: $lc-periwinkle; }
@@ -23,7 +24,20 @@ Screen { background: $lc-black; color: $lc-peach; }
 #spacer { height: 1fr; background: $lc-lavender; margin-bottom: 1; }
 
 #views { width: 1fr; padding: 0 1; }
-StatusView, TerminalView, MindchukView, SessionsView, UsageView { height: 1fr; }
+StatusView, TerminalView, MindchukView, SessionsView, UsageView, HomeView { height: 1fr; }
+.hm-box { border: round $lc-lavender; padding: 0 1; width: 1fr; height: 1fr; }
+.hm-row { height: 1fr; }
+#hm-mon { height: auto; min-height: 3; max-height: 9; border: round $lc-periwinkle; }
+.hm-top { height: 8; }
+.hm-cal { height: 2fr; }
+.hm-mail { height: 10; }
+#hm-usage { border: round $lc-periwinkle; }
+#hm-quick { border: round $lc-peach; padding: 0; }
+#hm-entry { height: 1fr; border: none; }
+#hm-entry-status { height: 1; color: $lc-blue; padding: 0 1; }
+HomeView:focus #hm-mon { border: round $lc-orange; }
+#hm-calbox-outlook, #hm-mail-outlook { border: round $lc-orange; }
+#hm-calbox-google, #hm-mail-google { border: round $lc-peach; }
 
 #list-title, #detail-title, .view-title { color: $lc-orange; text-style: bold; height: 1; margin-top: 1; }
 .view-status { height: 1; color: $lc-blue; }

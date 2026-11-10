@@ -17,6 +17,7 @@ from textual.widgets.option_list import Option
 from . import config, copilot_ops, git_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
+from .tui_home import HomeView
 from .tui_panes import (HelpScreen, GoogleView, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView,
                         UsageView, move)
 
@@ -94,6 +95,13 @@ HELP = {
         ("r", "Reload from ~/.copilot/session-store.db"),
         ("Esc", "Return to the repo list"),
     ]),
+    "home": ("HOME", [
+        ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, and a Mindchuk quick entry"),
+        ("r", "Reload usage, calendars and mail now (monitor refreshes every 2 s, the rest every 5 min)"),
+        ("n", "Focus the Mindchuk quick entry"),
+        ("Ctrl+s", "In the quick entry: send it to Mindchuk"),
+        ("Esc", "In the quick entry: back to the monitor"),
+    ]),
     "monitor": ("COPILOT MONITOR", [
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 20 s over the last 10 min (oldest → newest)"),
         ("STATE", "Icon: ● RUNNING green, ◐ WAITING FOR INPUT yellow (permission prompt, question, or silent 45 s+), ✖ ERROR red (model call failed), ○ IDLE white"),
@@ -139,7 +147,7 @@ HELP = {
 GLOBAL_HELP = [
     ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos"), ("F2 / t", "Terminal"),
     ("F3 / m", "Mindchuk"), ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"),
-    ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
+    ("F12 / z", "HOME: one-screen daily overview (default)"), ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
     ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
     ("q", "Quit (not while typing in the terminal)"),
 ]
@@ -211,6 +219,7 @@ class StatusView(Vertical):
         Binding("e", "app.launch('explorer')", "Explorer"),
         Binding("p", "app.launch('copilot')", "Copilot"),
         Binding("S", "app.cycle_sort", "Sort", show=False),
+        Binding("z", "app.show_home", "Home", show=False),
         Binding("t", "app.show_terminal", "Terminal"),
         Binding("m", "app.show_mindchuk", "Mindchuk"),
         Binding("s", "app.show_sessions", "Sessions"),
@@ -244,6 +253,7 @@ class LcarsDash(App):
     CSS_PATH = "lcars.tcss"
     TITLE = "ASSEMBLA REPO ACTIVITY"
     BINDINGS = [
+        Binding("f12", "show_home", show=False),
         Binding("f1", "show_status", "Software", show=False),
         Binding("f2", "show_terminal", show=False),
         Binding("f3", "show_mindchuk", show=False),
@@ -269,7 +279,7 @@ class LcarsDash(App):
         self.tests_busy: set[str] = set()
         self.test_results = tests_ops.load_results()
         self.scope = "status"
-        self.current_view = "status"
+        self.current_view = "home"
         self.sort_col: int | None = None
         self.sort_desc = False
         self._rebuilding = False
@@ -300,6 +310,7 @@ class LcarsDash(App):
         if s:
             self.show_detail(s)
         self.query_one(UsageView).render_usage()
+        self.query_one(HomeView).render_all()
         self.say(f"Theme: {self.lc_theme}")
 
     def _label_theme(self) -> None:
@@ -313,6 +324,7 @@ class LcarsDash(App):
             yield Static("", id="clock")
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
+                yield NavBlock("HOME\n[F12 / Z]", "show_home", id="n-home", classes="block")
                 yield NavBlock("SOFTWAREDEVELOPMENT\n[F1 / D]", "show_status", id="n-status", classes="block")
                 yield NavBlock("HOMEDEV\n[F8 / H]", "show_homedev", id="n-homedev", classes="block")
                 yield NavBlock("TERMINAL\n[F2 / T]", "show_terminal", id="n-terminal", classes="block")
@@ -325,7 +337,8 @@ class LcarsDash(App):
                 yield Static("", id="spacer")
                 yield NavBlock("", "cycle_theme", id="n-theme", classes="block")
                 yield NavBlock("HELP\n[F4 / ?]", "show_help", id="n-help", classes="block")
-            with ContentSwitcher(id="views", initial="v-status"):
+            with ContentSwitcher(id="views", initial="v-home"):
+                yield HomeView(id="v-home")
                 yield StatusView(id="v-status")
                 yield TerminalView(id="v-terminal")
                 yield MindchukView(id="v-mindchuk")
@@ -339,8 +352,8 @@ class LcarsDash(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.query_one("#table", DataTable).focus()
         self._build_columns()
+        self.action_show_home()
         self._label_theme()
         self.set_interval(1, self._tick)
         self._tick()
@@ -376,6 +389,10 @@ class LcarsDash(App):
             self.action_show_homedev()
         else:
             self.query_one("#table", DataTable).focus()
+
+    def action_show_home(self) -> None:
+        self._switch("home")
+        self.query_one(HomeView).open()
 
     def action_show_terminal(self) -> None:
         self._switch("terminal")

@@ -96,6 +96,20 @@ def usage(days: int = 30) -> dict:
             "per_folder": sorted(folders.values(), key=lambda r: -r[2])}
 
 
+def today_usage() -> dict:
+    """Today's (local date) sessions, calls, tokens and AIC, with a per-model breakdown."""
+    day = datetime.now().strftime("%Y-%m-%d")
+    with _conn() as c:
+        models = c.execute(
+            "SELECT model, count(DISTINCT session_id), count(*), coalesce(sum(input_tokens + output_tokens),0), "
+            "coalesce(sum(total_nano_aiu),0) / 1e9 FROM assistant_usage_events "
+            "WHERE substr(created_at,1,10) = ? GROUP BY model ORDER BY 3 DESC", (day,)).fetchall()
+        sessions = c.execute("SELECT count(DISTINCT session_id) FROM assistant_usage_events "
+                             "WHERE substr(created_at,1,10) = ?", (day,)).fetchone()[0]
+    return {"sessions": sessions, "calls": sum(m[2] for m in models), "tokens": sum(m[3] for m in models),
+            "aic": sum(m[4] for m in models), "models": models}
+
+
 # --- launchers -----------------------------------------------------------
 
 def _spawn(args: list[str], cwd: Path | None = None, console: bool = False) -> None:
