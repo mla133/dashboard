@@ -4,7 +4,6 @@ from __future__ import annotations
 import re
 import subprocess
 import threading
-import time
 from pathlib import Path
 
 from rich.text import Text
@@ -14,7 +13,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, RichLog, Static, TextArea
 
-from . import copilot_ops, home_ops, live_ops, google_ops, mindchuk_ops, outlook_ops, teams_ops
+from . import copilot_ops, live_ops, google_ops, mindchuk_ops, outlook_ops
 
 MARK = "\x01CWD\x01"
 
@@ -623,154 +622,6 @@ class GoogleView(OutlookView):
 
     def action_reply(self) -> None:
         self.act(google_ops.draft_reply, "Drafting reply (opens in Gmail)...", False)
-
-class TeamsView(ListTextView):
-    """Read-only Microsoft Teams chats: list on top, messages of the selected chat below."""
-    PREFIX = "tm"
-    TITLE = "MICROSOFT TEAMS  //  CHATS (READ-ONLY)"
-    BINDINGS = [Binding("r", "reload(True)", "Reload"), Binding("enter", "focus_text", show=False)]
-    STALE_S = 60
-
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.summary: dict | None = None
-        self.rows: dict[str, dict] = {}
-        self.err: Exception | None = None
-        self.state = "idle"  # idle | loading | signin | error | loaded
-        self.last_load = 0.0
-        self.token = 0
-        self.msg_token = 0
-        self.msg_timer = None
-        self.msg_cache: dict[str, tuple] = {}
-        self.messages_for: str | None = None
-
-    def say(self, msg: str) -> None:
-        # Teams status text may contain '[' (exception text, chat data): never parse it as markup (SEC-004).
-        self.query_one(f"#{self.PREFIX}-status", Static).update(Text(str(msg)))
-
-    def on_mount(self) -> None:
-        self.table.add_columns("", "TIME", "CHAT", "LAST MESSAGE")
-        self.set_interval(2, self._poll)
-
-    # ---- loading ----
-    def open(self) -> None:
-        self.table.focus()
-        if self.state in ("idle", "signin", "error") or time.time() - self.last_load > self.STALE_S:
-            self.action_reload(False, max_age=60)
-        else:
-            self.render_all()
-
-    def action_reload(self, retry: bool = True, max_age: float = 0.0) -> None:
-        self.state = "loading"
-        self.say("Reading Microsoft Teams...")
-        self.token += 1
-        token = self.token
-
-        def done(res):
-            if token != self.token:
-                return
-            self.last_load = time.time()
-            if isinstance(res, Exception):
-                self.err = res
-                self.state = "signin" if isinstance(res, teams_ops.TeamsSignInRequired) else "error"
-                self.table.clear()
-                self.rows = {}
-                self.render_all()
-                return
-            keep = self.selected_key()
-            self.err, self.summary = None, res
-            self.rows = {c["id"]: c for c in res["chats"]}
-            self.state = "loaded"
-            self.render_all(keep)
-        self.app.run_bg(lambda: teams_ops.summary(latest=5, retry=retry, max_age=max_age), done)
-
-    def _poll(self) -> None:
-        if self.app.current_view != "teams" or self.state != "signin":
-            return
-        if teams_ops.auth_state()["state"] in ("signed_in", "failed"):
-            self.action_reload(False)
-
-    # ---- rendering ----
-    def _styles(self) -> dict[str, str]:
-        c = self.app.colors
-        return {"h": c["ORANGE"], "today": f"bold {c['BLACK']} on {c['ORANGE']}", "unread": c["ORANGE"],
-                "mention": f"bold {c['RED']}", "dim": c["LAVENDER"], "err": c["RED"], "row": ""}
-
-    def _lines(self, lines: list[tuple[str, str]]) -> Text:
-        st, t = self._styles(), Text()
-        for tag, text in lines:
-            t.append(text + "\n", style=st.get(tag, ""))
-        return t
-
-    def render_all(self, keep: str | None = None) -> None:
-        """Re-style from the active theme; safe to call in any state."""
-        if self.state == "loaded" and self.summary is not None:
-            c = self.app.colors
-            t = self.table
-            if keep is None:
-                keep = self.selected_key()
-            t.clear()
-            for chat in self.summary["chats"]:
-                marker, when, title, last = home_ops.teams_cells(chat)
-                style = f"bold {c['ORANGE']}" if chat["unread"] else ""
-                t.add_row(Text(marker, style=f"bold {c['RED']}" if chat["mentions"] else style), Text(when, style=style),
-                          Text(title, style=style), Text(last, style=style), key=chat["id"])
-            if not self.summary["chats"]:
-                self.show_text(Text("No chats"))
-            else:
-                self.reselect(keep)
-            self.say(home_ops.teams_status(self.summary))
-        elif self.state in ("signin", "error") and self.err is not None:
-            self.show_text(self._lines(home_ops.teams_error_lines(self.err, 80, compact=False)))
-            notice = teams_ops.auth_state().get("cache_notice")
-            self.say(("Sign-in pending - r retries" if self.state == "signin" else "Error - r reload")
-                     + (f"  //  {notice}" if notice else ""))
-
-    # ---- messages ----
-    def on_select(self) -> None:
-        if self.msg_timer is not None:
-            self.msg_timer.stop()
-        self.msg_timer = self.set_timer(0.3, self._load_messages)
-
-    def _load_messages(self) -> None:
-        key = self.selected_key()
-        chat = self.rows.get(key) if key else None
-        if not chat:
-            return
-        self.messages_for = chat["id"]
-        cached = self.msg_cache.get(chat["id"])
-        if cached is not None and cached[0] == chat["time"]:
-            self._show_messages(chat, cached[1])
-            return
-        self.msg_token += 1
-        token = self.msg_token
-        self.show_text(Text("Loading messages..."))
-
-        def done(res):
-            if token != self.msg_token:
-                return
-            if isinstance(res, Exception):
-                self.show_text(self._lines(home_ops.teams_error_lines(res, 80, False)))
-                return
-            self.msg_cache[chat["id"]] = (chat["time"], res)
-            self._show_messages(chat, res)
-        self.app.run_bg(lambda: teams_ops.messages(chat["id"]), done)
-
-    def _show_messages(self, chat: dict, msgs: list) -> None:
-        t = Text()
-        t.append(f"{chat['title']}\n", style="bold")
-        members = ", ".join(chat.get("members") or [])
-        if members:
-            t.append(f"{members}\n", style=self._styles()["dim"])
-        t.append("\n")
-        t.append_text(self._lines(home_ops.teams_message_lines(msgs)))
-        self.show_text(t)
-
-    def on_data_table_row_selected(self, e: DataTable.RowSelected) -> None:
-        if e.data_table.id == "tm-table":
-            e.stop()
-            self.action_focus_text()
-
 
 class MonitorView(Navigable):
     """Sparkline per running Copilot CLI session (events per 20 s over the last 10 minutes)."""

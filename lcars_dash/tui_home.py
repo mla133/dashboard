@@ -9,7 +9,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Static, TextArea
 
-from . import copilot_ops, google_ops, home_ops, live_ops, mindchuk_ops, outlook_ops, teams_ops
+from . import copilot_ops, google_ops, home_ops, live_ops, mindchuk_ops, outlook_ops
 from .tui_panes import Navigable
 
 MON_COLS = " {:<3}{:<27}{:<34}{:<18}{:<6}{:>9}  {:<7}"
@@ -17,7 +17,7 @@ MON_COLS = " {:<3}{:<27}{:<34}{:<18}{:<6}{:>9}  {:<7}"
 
 GO = {"hm-mon": "show_monitor", "hm-usage": "show_usage", "hm-quick": "show_mindchuk",
       "hm-calbox-outlook": "show_outlook", "hm-calbox-google": "show_google",
-      "hm-mail-outlook": "show_outlook", "hm-mail-google": "show_google", "hm-teams": "show_teams"}
+      "hm-mail-outlook": "show_outlook", "hm-mail-google": "show_google"}
 
 
 class FocusBox(Static, can_focus=True):
@@ -26,7 +26,7 @@ class FocusBox(Static, can_focus=True):
 
 class HomeView(Navigable):
     BINDINGS = [Binding("tab", "cycle(1)", show=False), Binding("shift+tab", "cycle(-1)", show=False),
-                Binding("enter", "go", "Open tab"), Binding("r", "reload(True)", "Reload"), Binding("n", "entry", "Quick entry"),
+                Binding("enter", "go", "Open tab"), Binding("r", "reload", "Reload"), Binding("n", "entry", "Quick entry"),
                 Binding("ctrl+s", "send", "Send entry", priority=True), Binding("escape", "back", "Back")]
     STALE_S = 60
 
@@ -34,7 +34,6 @@ class HomeView(Navigable):
         super().__init__(**kw)
         self.data: dict[str, object] = {}
         self.busy, self.last_load, self.timer = False, 0.0, None
-        self.teams_busy = False
 
     def compose(self) -> ComposeResult:
         mon, fri = home_ops.week_range()
@@ -51,7 +50,6 @@ class HomeView(Navigable):
         with Horizontal(classes="hm-row hm-mail"):
             for src in ("outlook", "google"):
                 yield FocusBox("", id=f"hm-mail-{src}", classes="hm-box")
-            yield FocusBox("", id="hm-teams", classes="hm-box")
         yield Static(f"r reload  //  n quick entry (Ctrl+S sends, Esc leaves)  //  click or Tab+Enter opens the tab  //  monitor 2 s, rest 5 min  //  week {week}",
                      id="hm-status", classes="view-status")
 
@@ -60,7 +58,7 @@ class HomeView(Navigable):
         week = f"{mon:%m-%d} to {fri:%m-%d}"
         titles = {"#hm-mon": "COPILOT MONITOR", "#hm-usage": "TODAY'S COPILOT USAGE", "#hm-quick": "MINDCHUK QUICK ENTRY",
                   "#hm-calbox-outlook": f"OUTLOOK CALENDAR  {week}", "#hm-calbox-google": f"GMAIL CALENDAR  {week}",
-                  "#hm-mail-outlook": "OUTLOOK INBOX", "#hm-mail-google": "GMAIL INBOX", "#hm-teams": "TEAMS CHAT"}
+                  "#hm-mail-outlook": "OUTLOOK INBOX", "#hm-mail-google": "GMAIL INBOX"}
         for sel, title in titles.items():
             self.query_one(sel).border_title = title
         self.timer = self.set_interval(2, self._auto)
@@ -130,9 +128,6 @@ class HomeView(Navigable):
         if self.app.current_view != "home":
             return
         self.refresh_monitor()
-        if isinstance(self.data.get("teams"), teams_ops.TeamsSignInRequired) and \
-                teams_ops.auth_state()["state"] in ("signed_in", "failed"):
-            self.reload_teams()
         if time.time() - self.last_load > 300:
             self.action_reload()
 
@@ -147,9 +142,8 @@ class HomeView(Navigable):
             self.render_monitor()
         self.app.run_bg(live_ops.snapshot, done)
 
-    def action_reload(self, retry: bool = False) -> None:
+    def action_reload(self) -> None:
         self.last_load = time.time()
-        self.reload_teams(retry)
         jobs = {"usage": copilot_ops.today_usage,
                 "cal_outlook": lambda: home_ops.week_events(outlook_ops), "cal_google": lambda: home_ops.week_events(google_ops),
                 "mail_outlook": lambda: outlook_ops.mail(8), "mail_google": lambda: google_ops.mail(8)}
@@ -159,22 +153,11 @@ class HomeView(Navigable):
                 self.render_all()
             self.app.run_bg(fn, done)
 
-    def reload_teams(self, retry: bool = False) -> None:
-        if self.teams_busy:
-            return
-        self.teams_busy = True
-
-        def done(res):
-            self.teams_busy = False
-            self.data["teams"] = res
-            self.render_teams()
-        self.app.run_bg(lambda: teams_ops.summary(latest=5, retry=retry), done)
-
     # ---- render ----
     def _styles(self) -> dict[str, str]:
         c = self.app.colors
         return {"h": c["ORANGE"], "today": f"bold {c['BLACK']} on {c['ORANGE']}", "unread": c["ORANGE"], "dim": c["LAVENDER"],
-                "err": c["RED"], "row": "", "hdr": f"bold reverse {c['LAVENDER']}", "mention": f"bold {c['RED']}"}
+                "err": c["RED"], "row": "", "hdr": f"bold reverse {c['LAVENDER']}"}
 
     def _lines(self, lines: list[tuple[str, str]]) -> Text:
         st, t = self._styles(), Text()
@@ -191,7 +174,6 @@ class HomeView(Navigable):
         for src in ("outlook", "google"):
             self.render_cal(src)
             self.render_mail(src)
-        self.render_teams()
 
     def render_monitor(self) -> None:
         rows = self.data.get("monitor")
@@ -244,12 +226,3 @@ class HomeView(Navigable):
         lines = [("err", f"Error: {rows}")] if isinstance(rows, Exception) else \
             home_ops.mail_lines(rows, self._width(f"#hm-mail-{src}"))
         self.query_one(f"#hm-mail-{src}", Static).update(self._lines(lines))
-
-    def render_teams(self) -> None:
-        res = self.data.get("teams")
-        if res is None:
-            return
-        w = self._width("#hm-teams")
-        lines = home_ops.teams_error_lines(res, w, compact=True) if isinstance(res, Exception) else \
-            home_ops.teams_lines(res, w)
-        self.query_one("#hm-teams", Static).update(self._lines(lines))
