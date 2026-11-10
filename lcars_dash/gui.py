@@ -1127,6 +1127,7 @@ class HomePane(tk.Frame):
                          ("hdr", LAVENDER)):
             t.tag_configure(tag, foreground=col)
         t.tag_configure("hdr", background=LAVENDER, foreground=BLACK)
+        t.tag_configure("today", background=ORANGE, foreground=BLACK, font=(self.FONT[0], self.FONT[1], "bold"))
         if entry:
             self.entry = t
             bar = tk.Frame(f, bg=BLACK, height=34)

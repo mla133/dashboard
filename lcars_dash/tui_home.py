@@ -123,7 +123,7 @@ class HomeView(Navigable):
     # ---- render ----
     def _styles(self) -> dict[str, str]:
         c = self.app.colors
-        return {"h": c["ORANGE"], "today": f"bold {c['PEACH']}", "unread": c["ORANGE"], "dim": c["LAVENDER"],
+        return {"h": c["ORANGE"], "today": f"bold {c['BLACK']} on {c['ORANGE']}", "unread": c["ORANGE"], "dim": c["LAVENDER"],
                 "err": c["RED"], "row": "", "hdr": f"bold reverse {c['LAVENDER']}"}
 
     def _lines(self, lines: list[tuple[str, str]]) -> Text:
