@@ -106,6 +106,7 @@ class RoundFrame(tk.Canvas):
     def __init__(self, parent, color=PERIWINKLE, **kw):
         super().__init__(parent, bg=BLACK, highlightthickness=0, **kw)
         self.color, self.active, self.child, self._win = color, False, None, None
+        self.hl, self.hl_width = None, 3
         self.bind("<Configure>", lambda e: self.draw())
 
     def set_child(self, widget) -> None:
@@ -120,8 +121,8 @@ class RoundFrame(tk.Canvas):
     def draw(self) -> None:
         self.delete("border")
         w, h = self.winfo_width(), self.winfo_height()
-        round_rect(self, 2, 2, w - 2, h - 2, 18, fill="", outline=ORANGE if self.active else self.color,
-                   width=3, tags="border")
+        round_rect(self, 2, 2, w - 2, h - 2, 18, fill="",         outline=(self.hl or ORANGE) if self.active else self.color,
+                   width=self.hl_width, tags="border")
         if self._win:
             self.tag_lower("border")
             self.coords(self._win, 10, 10)
@@ -1128,8 +1129,13 @@ class HomePane(tk.Frame):
         t.pack(fill="both", expand=True)
         rf.set_child(holder)
         self.order.append(t)
-        t.bind("<FocusIn>", lambda e: rf.highlight(True))
-        t.bind("<FocusOut>", lambda e: rf.highlight(False))
+        def mark(on, rf=rf, lbl=lbl, t=t, color=color):
+            rf.hl, rf.hl_width = ("#FFFFFF", 6) if on else (None, 3)
+            rf.highlight(on)
+            lbl.configure(fg=BLACK if on else color, bg=ORANGE if on else BLACK)
+            t.configure(bg="#2A2A33" if on else BLACK)
+        t.bind("<FocusIn>", lambda e: mark(True))
+        t.bind("<FocusOut>", lambda e: mark(False))
         for key, d in (("<Tab>", 1), ("<ISO_Left_Tab>", -1), ("<Shift-Tab>", -1)):
             t.bind(key, lambda e, d=d, t=t: (self.cycle(t, d), "break")[1])
         if not entry:
