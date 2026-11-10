@@ -101,6 +101,7 @@ HELP = {
         ("n", "Focus the Mindchuk quick entry"),
         ("Ctrl+s", "In the quick entry: send it to Mindchuk"),
         ("Esc", "In the quick entry: back to the monitor"),
+        ("click / Tab + Enter", "Click a pane to jump to its tab (monitor, usage, Mindchuk, Outlook, Gmail). Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
     ]),
     "monitor": ("COPILOT MONITOR", [
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 20 s over the last 10 min (oldest → newest)"),

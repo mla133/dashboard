@@ -35,7 +35,8 @@ StatusView, TerminalView, MindchukView, SessionsView, UsageView, HomeView { heig
 #hm-quick { border: round $lc-peach; padding: 0; }
 #hm-entry { height: 1fr; border: none; }
 #hm-entry-status { height: 1; color: $lc-blue; padding: 0 1; }
-HomeView:focus #hm-mon { border: round $lc-orange; }
+#hm-mon:focus, #hm-usage:focus, #hm-quick:focus-within, #hm-calbox-outlook:focus, #hm-calbox-google:focus,
+#hm-mail-outlook:focus, #hm-mail-google:focus { border: double $lc-orange; }
 #hm-calbox-outlook, #hm-mail-outlook { border: round $lc-orange; }
 #hm-calbox-google, #hm-mail-google { border: round $lc-peach; }
 

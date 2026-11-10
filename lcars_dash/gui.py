@@ -1096,14 +1096,16 @@ class HomePane(tk.Frame):
         for r, w in enumerate((2, 3, 10, 5)):
             self.rowconfigure(r, weight=w, uniform=None)
         mon, fri = home_ops.week_range()
-        self.mon = self.panel("COPILOT MONITOR  //  RUNNING SESSIONS", LAVENDER, 0, 0, 2)
-        self.usage = self.panel("TODAY'S COPILOT USAGE", PERIWINKLE, 1, 0)
-        self.quick_frame = self.panel("MINDCHUK  //  QUICK ENTRY", PEACH, 1, 1, entry=True)
+        self.order: list[tk.Text] = []
+        go = lambda name: (lambda: getattr(self.app, name)())
+        self.mon = self.panel("COPILOT MONITOR  //  RUNNING SESSIONS", LAVENDER, 0, 0, 2, go=go("show_monitor"))
+        self.usage = self.panel("TODAY'S COPILOT USAGE", PERIWINKLE, 1, 0, go=go("show_usage"))
+        self.quick_frame = self.panel("MINDCHUK  //  QUICK ENTRY", PEACH, 1, 1, entry=True, go=go("show_mindchuk"))
         week = f"{mon:%m-%d} to {fri:%m-%d}"
-        self.cal = {"outlook": self.panel(f"OUTLOOK CALENDAR  //  {week}", ORANGE, 2, 0),
-                    "google": self.panel(f"GMAIL CALENDAR  //  {week}", PEACH, 2, 1)}
-        self.mail = {"outlook": self.panel("OUTLOOK INBOX  //  RECENT", ORANGE, 3, 0),
-                     "google": self.panel("GMAIL INBOX  //  RECENT", PEACH, 3, 1)}
+        self.cal = {"outlook": self.panel(f"OUTLOOK CALENDAR  //  {week}", ORANGE, 2, 0, go=go("show_outlook")),
+                    "google": self.panel(f"GMAIL CALENDAR  //  {week}", PEACH, 2, 1, go=go("show_google"))}
+        self.mail = {"outlook": self.panel("OUTLOOK INBOX  //  RECENT", ORANGE, 3, 0, go=go("show_outlook")),
+                     "google": self.panel("GMAIL INBOX  //  RECENT", PEACH, 3, 1, go=go("show_google"))}
         self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
         self.status.grid(row=4, column=0, columnspan=2, sticky="ew")
         for t in (self.mon, self.usage, *self.cal.values(), *self.mail.values()):
@@ -1111,10 +1113,12 @@ class HomePane(tk.Frame):
                 t.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
             t.bind("<Configure>", lambda e: self.after_idle(self.render_all))
 
-    def panel(self, title: str, color: str, row: int, col: int, span: int = 1, entry: bool = False):
+    def panel(self, title: str, color: str, row: int, col: int, span: int = 1, entry: bool = False, go=None):
         f = tk.Frame(self, bg=BLACK)
         f.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=(0, 6) if col == 0 and span == 1 else 0, pady=(0, 4))
-        tk.Label(f, text=title, bg=BLACK, fg=color, font=LABEL_FONT, anchor="w").pack(fill="x")
+        lbl = tk.Label(f, text=title, bg=BLACK, fg=color, font=LABEL_FONT, anchor="w", cursor="hand2")
+        lbl.pack(fill="x")
+        lbl.bind("<Button-1>", lambda e: go())
         rf = RoundFrame(f, color, height=40)
         rf.pack(fill="both", expand=True)
         holder = tk.Frame(rf, bg=BLACK)
@@ -1123,6 +1127,15 @@ class HomePane(tk.Frame):
                     cursor="xterm" if entry else "arrow", insertbackground=ORANGE)
         t.pack(fill="both", expand=True)
         rf.set_child(holder)
+        self.order.append(t)
+        t.bind("<FocusIn>", lambda e: rf.highlight(True))
+        t.bind("<FocusOut>", lambda e: rf.highlight(False))
+        for key, d in (("<Tab>", 1), ("<ISO_Left_Tab>", -1), ("<Shift-Tab>", -1)):
+            t.bind(key, lambda e, d=d, t=t: (self.cycle(t, d), "break")[1])
+        if not entry:
+            for ev in ("<Button-1>", "<Return>"):
+                t.bind(ev, lambda e: (go(), "break")[1])
+            t.configure(cursor="hand2")
         for tag, col in (("h", ORANGE), ("today", PEACH), ("unread", ORANGE), ("dim", LAVENDER), ("err", RED),
                          ("hdr", LAVENDER)):
             t.tag_configure(tag, foreground=col)
@@ -1138,8 +1151,10 @@ class HomePane(tk.Frame):
             self.entry_status.pack(side="left", fill="both", expand=True)
             t.bind("<Control-Return>", lambda e: (self.add_entry(), "break")[1])
             t.bind("<Escape>", lambda e: (self.mon.focus_set(), "break")[1])
-            t.bind("<Tab>", lambda e: (self.mon.focus_set(), "break")[1])
         return t
+
+    def cycle(self, t: tk.Text, step: int) -> None:
+        self.order[(self.order.index(t) + step) % len(self.order)].focus_set()
 
     def cols(self, t: tk.Text) -> int:
         return max(30, t.winfo_width() // max(1, self.fnt.measure("0")) - 2)
@@ -1528,7 +1543,8 @@ class Dashboard(tk.Tk):
             ("r", "Reload usage, calendars and mail now (monitor refreshes every 2 s, the rest every 5 min)"),
             ("n", "Focus the Mindchuk quick entry"),
             ("Ctrl+Enter", "In the quick entry: send it to Mindchuk (or click ADD)"),
-            ("Esc / Tab", "In the quick entry: back to the monitor (hotkeys work there)"),
+            ("Esc", "In the quick entry: back to the monitor (hotkeys work there)"),
+            ("click / Tab + Enter", "Click a pane (or its title) to jump to its tab: monitor, usage, Mindchuk, Outlook, Gmail. Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
         ]),
         "status": ("SOFTWAREDEVELOPMENT / HOMEDEV", [
             ("j / k, ↓ / ↑", "Move through repositories (or scroll the summary)"),

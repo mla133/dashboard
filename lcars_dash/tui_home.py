@@ -15,33 +15,42 @@ from .tui_panes import Navigable
 MON_COLS = " {:<3}{:<27}{:<34}{:<18}{:<6}{:>9}  {:<7}"
 
 
+GO = {"hm-mon": "show_monitor", "hm-usage": "show_usage", "hm-quick": "show_mindchuk",
+      "hm-calbox-outlook": "show_outlook", "hm-calbox-google": "show_google",
+      "hm-mail-outlook": "show_outlook", "hm-mail-google": "show_google"}
+
+
+class FocusBox(Static, can_focus=True):
+    """A Static that Tab can focus."""
+
+
 class HomeView(Navigable):
-    BINDINGS = [Binding("r", "reload", "Reload"), Binding("n", "entry", "Quick entry"),
+    BINDINGS = [Binding("tab", "cycle(1)", show=False), Binding("shift+tab", "cycle(-1)", show=False),
+                Binding("enter", "go", "Open tab"), Binding("r", "reload", "Reload"), Binding("n", "entry", "Quick entry"),
                 Binding("ctrl+s", "send", "Send entry", priority=True), Binding("escape", "back", "Back")]
-    can_focus = True
     STALE_S = 60
 
     def __init__(self, **kw):
         super().__init__(**kw)
         self.data: dict[str, object] = {}
-        self.loading, self.last_load, self.timer = False, 0.0, None
+        self.busy, self.last_load, self.timer = False, 0.0, None
 
     def compose(self) -> ComposeResult:
         mon, fri = home_ops.week_range()
         week = f"{mon:%m-%d} to {fri:%m-%d}"
-        yield Static("", id="hm-mon", classes="hm-box")
+        yield FocusBox("", id="hm-mon", classes="hm-box")
         with Horizontal(classes="hm-row hm-top"):
-            yield Static("", id="hm-usage", classes="hm-box")
+            yield FocusBox("", id="hm-usage", classes="hm-box")
             with Vertical(classes="hm-box", id="hm-quick"):
-                yield TextArea(id="hm-entry")
+                yield TextArea(id="hm-entry", tab_behavior="focus")
                 yield Static("", id="hm-entry-status")
         with Horizontal(classes="hm-row hm-cal"):
             for src in ("outlook", "google"):
                 yield VerticalScroll(Static("", id=f"hm-cal-{src}"), id=f"hm-calbox-{src}", classes="hm-box")
         with Horizontal(classes="hm-row hm-mail"):
             for src in ("outlook", "google"):
-                yield Static("", id=f"hm-mail-{src}", classes="hm-box")
-        yield Static(f"r reload  //  n quick entry (Ctrl+S sends, Esc leaves)  //  monitor 2 s, rest 5 min  //  week {week}",
+                yield FocusBox("", id=f"hm-mail-{src}", classes="hm-box")
+        yield Static(f"r reload  //  n quick entry (Ctrl+S sends, Esc leaves)  //  click or Tab+Enter opens the tab  //  monitor 2 s, rest 5 min  //  week {week}",
                      id="hm-status", classes="view-status")
 
     def on_mount(self) -> None:
@@ -59,7 +68,7 @@ class HomeView(Navigable):
 
     # ---- actions ----
     def open(self) -> None:
-        self.screen.set_focus(self)
+        self.screen.set_focus(self.query_one("#hm-mon"))
         self.refresh_monitor()
         if time.time() - self.last_load > self.STALE_S:
             self.action_reload()
@@ -68,7 +77,31 @@ class HomeView(Navigable):
         self.query_one("#hm-entry", TextArea).focus()
 
     def action_back(self) -> None:
-        self.screen.set_focus(self)
+        self.screen.set_focus(self.query_one("#hm-mon"))
+
+    async def _open_tab(self, widget) -> None:
+        while widget is not None and widget is not self:
+            if widget.id in GO:
+                await self.app.run_action(GO[widget.id])
+                return
+            widget = widget.parent
+
+    def action_cycle(self, step: int) -> None:
+        ids = list(GO)
+        cur = self.app.focused
+        while cur is not None and cur.id not in GO:
+            cur = cur.parent
+        i = ids.index(cur.id) if cur is not None else 0
+        self.screen.set_focus(self.query_one(f"#{ids[(i + step) % len(ids)]}"))
+        if ids[(i + step) % len(ids)] == "hm-quick":
+            self.query_one("#hm-entry").focus()
+
+    async def action_go(self) -> None:
+        await self._open_tab(self.app.focused)
+
+    async def on_click(self, event) -> None:
+        if not isinstance(event.widget, TextArea):
+            await self._open_tab(event.widget)
 
     def action_send(self) -> None:
         box = self.query_one("#hm-entry", TextArea)
@@ -99,12 +132,12 @@ class HomeView(Navigable):
             self.action_reload()
 
     def refresh_monitor(self) -> None:
-        if self.loading:
+        if self.busy:
             return
-        self.loading = True
+        self.busy = True
 
         def done(rows):
-            self.loading = False
+            self.busy = False
             self.data["monitor"] = rows
             self.render_monitor()
         self.app.run_bg(live_ops.snapshot, done)
