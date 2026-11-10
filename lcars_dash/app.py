@@ -18,7 +18,7 @@ from . import config, copilot_ops, git_ops, panels, tests_ops
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
 from .tui_home import HomeView
-from .tui_panes import (HelpScreen, GoogleView, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TerminalView,
+from .tui_panes import (HelpScreen, GoogleView, ListTextView, MindchukView, MonitorView, OutlookView, SessionsView, TeamsView, TerminalView,
                         UsageView, move)
 
 HOMEDEV = Path.home() / "HomeDev"
@@ -86,6 +86,18 @@ HELP = {
         ("Esc", "Back to the repo list"),
         ("(setup)", "~/.lcars_dash/client_secret.json; first use opens a browser to sign in"),
     ]),
+    "teams": ("MICROSOFT TEAMS (READ-ONLY)", [
+        ("(what)", "Your 1:1, group and meeting chats, newest first. * = unread, @ = unread message mentions you. Nothing is ever sent or marked read"),
+        ("j / k, g / G", "Move through chats (or scroll the messages)"),
+        ("Ctrl+d / Ctrl+u", "Page down / up"),
+        ("l / Enter", "Read the selected chat (focus the messages)"),
+        ("h", "Back to the chat list"),
+        ("Tab", "Switch between list and messages"),
+        ("r", "Reload chats; restarts sign-in if it failed or expired"),
+        ("Esc", "Back to the repo list"),
+        ("(setup)", "~/.lcars_dash/teams_config.json {\"client_id\", \"tenant_id\"}; first use shows a sign-in code for microsoft.com/devicelogin"),
+        ("(sign out)", "Quit the app, then delete ~/.lcars_dash/teams_token.bin (a running app keeps its session until it exits)"),
+    ]),
     "sessions": ("COPILOT SESSIONS", [
         ("j / k, g / G", "Move through sessions (or scroll the details)"),
         ("l / h", "Focus the details / the list"),
@@ -96,12 +108,12 @@ HELP = {
         ("Esc", "Return to the repo list"),
     ]),
     "home": ("HOME", [
-        ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, and a Mindchuk quick entry"),
-        ("r", "Reload usage, calendars and mail now (monitor refreshes every 2 s, the rest every 5 min)"),
+        ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, Teams unread chats and mentions, and a Mindchuk quick entry"),
+        ("r", "Reload usage, calendars, mail and Teams now (monitor refreshes every 2 s,         the rest every 5 min); restarts a failed Teams sign-in"),
         ("n", "Focus the Mindchuk quick entry"),
         ("Ctrl+s", "In the quick entry: send it to Mindchuk"),
         ("Esc", "In the quick entry: back to the monitor"),
-        ("click / Tab + Enter", "Click a pane to jump to its tab (monitor, usage, Mindchuk, Outlook, Gmail). Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
+        ("click / Tab + Enter", "Click a pane to jump to its tab (monitor, usage, Mindchuk, Outlook, Gmail, Teams). Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
     ]),
     "monitor": ("COPILOT MONITOR", [
         ("(what)", "One row per running Copilot CLI session; bars = activity events per 20 s over the last 10 min (oldest → newest)"),
@@ -149,6 +161,7 @@ GLOBAL_HELP = [
     ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos"), ("F2 / t", "Terminal"),
     ("F3 / m", "Mindchuk"), ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"),
     ("F12 / z", "HOME: one-screen daily overview (default)"), ("F9 / w", "Monitor running Copilot sessions"), ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
+    ("⇧F11 / y", "Microsoft Teams chats (read-only)"),
     ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
     ("q", "Quit (not while typing in the terminal)"),
 ]
@@ -228,6 +241,7 @@ class StatusView(Vertical):
         Binding("w", "app.show_monitor", "Monitor"),
         Binding("o", "app.show_outlook", "Outlook"),
         Binding("i", "app.show_google", "Gmail"),
+        Binding("y", "app.show_teams", "Teams", show=False),
         Binding("c", "app.cycle_theme", "Theme", show=False),
         Binding("question_mark", "app.show_help", "Help", show=False),
         Binding("enter,l", "app.open_detail", "Open", show=False),
@@ -266,6 +280,7 @@ class LcarsDash(App):
         Binding("f9", "show_monitor", show=False),
         Binding("f10", "show_outlook", show=False),
         Binding("f11", "show_google", show=False),
+        Binding("shift+f11,f23", "show_teams", show=False),
         Binding("ctrl+c", "interrupt", show=False, priority=True),
     ]
 
@@ -312,6 +327,7 @@ class LcarsDash(App):
             self.show_detail(s)
         self.query_one(UsageView).render_usage()
         self.query_one(HomeView).render_all()
+        self.query_one(TeamsView).render_all()
         self.say(f"Theme: {self.lc_theme}")
 
     def _label_theme(self) -> None:
@@ -335,6 +351,7 @@ class LcarsDash(App):
                 yield NavBlock("MONITOR\n[F9 / W]", "show_monitor", id="n-monitor", classes="block")
                 yield NavBlock("OUTLOOK\n[F10 / O]", "show_outlook", id="n-outlook", classes="block")
                 yield NavBlock("GMAIL\n[F11 / I]", "show_google", id="n-google", classes="block")
+                yield NavBlock("TEAMS\n[⇧F11 / Y]", "show_teams", id="n-teams", classes="block")
                 yield Static("", id="spacer")
                 yield NavBlock("", "cycle_theme", id="n-theme", classes="block")
                 yield NavBlock("HELP\n[F4 / ?]", "show_help", id="n-help", classes="block")
@@ -348,8 +365,9 @@ class LcarsDash(App):
                 yield MonitorView(id="v-monitor")
                 yield OutlookView(id="v-outlook")
                 yield GoogleView(id="v-google")
+                yield TeamsView(id="v-teams")
         yield Static("j/k move  g/G top/bottom  l/Enter open  b branch  r/a refresh  x tests  e explorer  p copilot  "
-                     "s sessions  u usage  ? help  q quit", id="statusbar")
+                     "s sessions  u usage  y teams  ? help  q quit", id="statusbar")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -419,6 +437,10 @@ class LcarsDash(App):
     def action_show_google(self) -> None:
         self._switch("google")
         self.query_one(GoogleView).open()
+
+    def action_show_teams(self) -> None:
+        self._switch("teams")
+        self.query_one(TeamsView).open()
 
     def action_show_monitor(self) -> None:
         self._switch("monitor")

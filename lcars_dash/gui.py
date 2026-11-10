@@ -16,7 +16,8 @@ from tkinter import font as tkfont, messagebox, ttk
 from rich.style import Style
 from rich.text import Text
 
-from . import config, copilot_ops, git_ops, google_ops, home_ops, live_ops, mindchuk_ops, outlook_ops, panels, tests_ops
+from . import (config, copilot_ops, git_ops, google_ops, home_ops, live_ops, mindchuk_ops, outlook_ops, panels,
+               teams_ops, tests_ops)
 from .git_ops import RepoStatus
 from .themes import DEFAULT_THEME, THEMES
 
@@ -886,6 +887,193 @@ class GooglePane(OutlookPane):
         self.act(google_ops.draft_reply, "Drafting reply (opens in Gmail)...", False)
 
 
+class TeamsPane(tk.Frame):
+    """Read-only Microsoft Teams chats (Graph, delegated Chat.Read): chat list plus message reader."""
+    STALE_S = 60
+
+    def __init__(self, parent, app: "Dashboard"):
+        super().__init__(parent, bg=BLACK)
+        self.app = app
+        self.summary: dict | None = None
+        self.rows: dict[str, dict] = {}
+        self.err: Exception | None = None
+        self.state = "idle"  # idle | loading | signin | error | loaded
+        self.last_load = 0.0
+        self.token = self.msg_token = 0
+        self.msg_job = self.poll_job = None
+        self.msg_cache: dict[str, tuple[object, list]] = {}
+        self.title = tk.Label(self, text="MICROSOFT TEAMS  //  CHATS (READ-ONLY)", bg=BLACK, fg=ORANGE,
+                              font=LABEL_FONT, anchor="w")
+        self.title.pack(fill="x")
+        bar = tk.Frame(self, bg=BLACK, height=48)
+        bar.pack(fill="x", pady=(0, 6))
+        bar.pack_propagate(False)
+        for text, color, cmd in (("RELOAD [R]", BLUE, lambda: self.reload(True)),
+                                 ("READ [L]", PERIWINKLE, lambda: self.view.focus_set())):
+            Pill(bar, text, color, cmd, width=10).pack(side="left", fill="both", expand=True, padx=(0, 6))
+        self.list_frame = RoundFrame(self, PERIWINKLE, height=240)
+        self.list_frame.pack(fill="both", expand=True)
+        holder = tk.Frame(self.list_frame, bg=BLACK)
+        self.tree = ttk.Treeview(holder, columns=("m", "a", "b", "c"), show="headings", selectmode="browse")
+        for cid, title, w in (("m", "", 50), ("a", "TIME", 130), ("b", "CHAT", 260), ("c", "LAST MESSAGE", 700)):
+            self.tree.heading(cid, text=title)
+            self.tree.column(cid, width=w, stretch=cid == "c")
+        self.tree.tag_configure("unread", foreground=ORANGE, font=(BODY_FONT[0], BODY_FONT[1], "bold"))
+        self.tree.tag_configure("mention", foreground=RED, font=(BODY_FONT[0], BODY_FONT[1], "bold"))
+        sb = ttk.Scrollbar(holder, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.tree.pack(side="left", fill="both", expand=True)
+        self.list_frame.set_child(holder)
+        self.text_frame = RoundFrame(self, LAVENDER, height=300)
+        self.text_frame.pack(fill="both", expand=True, pady=(8, 0))
+        th = tk.Frame(self.text_frame, bg=BLACK)
+        self.view = tk.Text(th, bg=BLACK, fg=TEXT, font=BODY_FONT, wrap="word", bd=0, highlightthickness=0,
+                            state="disabled", cursor="arrow")
+        tsb = ttk.Scrollbar(th, command=self.view.yview)
+        self.view.configure(yscrollcommand=tsb.set)
+        tsb.pack(side="right", fill="y")
+        self.view.pack(side="left", fill="both", expand=True)
+        self.text_frame.set_child(th)
+        self.view.tag_configure("h", background=LAVENDER, foreground=BLACK, font=LABEL_FONT, spacing1=8, spacing3=2)
+        self.view.tag_configure("today", background=ORANGE, foreground=BLACK,
+                                font=(BODY_FONT[0], BODY_FONT[1], "bold"))
+        self.view.tag_configure("unread", foreground=ORANGE)
+        self.view.tag_configure("mention", foreground=RED, font=(BODY_FONT[0], BODY_FONT[1], "bold"))
+        self.view.tag_configure("dim", foreground=LAVENDER)
+        self.view.tag_configure("err", foreground=RED)
+        self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
+        self.status.pack(fill="x")
+
+        self.tree.bind("<<TreeviewSelect>>", lambda e: self.on_select())
+        self.tree.bind("<FocusIn>", lambda e: (self.list_frame.highlight(True), self.text_frame.highlight(False)))
+        self.view.bind("<FocusIn>", lambda e: (self.list_frame.highlight(False), self.text_frame.highlight(True)))
+        self.view.bind("<Button-1>", lambda e: self.view.focus_set())
+        self.tree.bind("<Return>", lambda e: (self.view.focus_set(), "break")[1])
+        for k, fn in (("r", lambda: self.reload(True)), ("j", lambda: self.move(1)), ("k", lambda: self.move(-1)),
+                      ("g", lambda: self.move("top")), ("G", lambda: self.move("bottom")),
+                      ("Control-d", lambda: self.move(10)), ("Control-u", lambda: self.move(-10)),
+                      ("l", lambda: self.view.focus_set()), ("h", lambda: self.tree.focus_set()),
+                      ("Escape", app.show_status)):
+            for w in (self.tree, self.view):
+                w.bind(f"<Key-{k}>" if len(k) == 1 else f"<{k}>", lambda e, f=fn: (f(), "break")[1])
+        bind_tab(self.tree, self.view)
+
+    def say(self, msg: str) -> None:
+        self.status.configure(text=msg)
+
+    def selected(self) -> dict | None:
+        sel = self.tree.selection()
+        return self.rows.get(sel[0]) if sel else None
+
+    def move(self, step) -> None:
+        if self.focus_get() is self.view:
+            self.view.yview_moveto(0 if step == "top" else 1) if isinstance(step, str) else \
+                self.view.yview_scroll(step * 2, "units")
+            return
+        rows = self.tree.get_children()
+        if not rows:
+            return
+        cur = self.tree.selection()
+        i = rows.index(cur[0]) if cur else 0
+        i = 0 if step == "top" else len(rows) - 1 if step == "bottom" else min(max(i + step, 0), len(rows) - 1)
+        self.tree.selection_set(rows[i])
+        self.tree.see(rows[i])
+
+    def open(self) -> None:
+        self.tree.focus_set()
+        if self.state in ("idle", "signin", "error") or time.time() - self.last_load > self.STALE_S:
+            self.reload(False, max_age=60)
+        if self.poll_job is None:
+            self.poll_job = self.after(2000, self._poll)
+
+    def reload(self, retry: bool = False, max_age: float = 0.0) -> None:
+        self.state = "loading"
+        self.say("Reading Microsoft Teams...")
+        self.token += 1
+        token = self.token
+
+        def done(res):
+            if token != self.token:
+                return
+            self.last_load = time.time()
+            if isinstance(res, Exception):
+                self.err, self.summary, self.rows = res, None, {}
+                self.state = "signin" if isinstance(res, teams_ops.TeamsSignInRequired) else "error"
+                self.tree.delete(*self.tree.get_children())
+                self.show_lines(home_ops.teams_error_lines(res, 80, False))
+                notice = teams_ops.auth_state().get("cache_notice") or ""
+                self.say(("Sign-in pending - r retries" if self.state == "signin" else "Error - r reload")
+                         + (f"  //  {notice}" if notice else ""))
+                return
+            keep = self.tree.selection()
+            self.err, self.summary, self.state = None, res, "loaded"
+            self.rows = {c["id"]: c for c in res["chats"]}
+            self.tree.delete(*self.tree.get_children())
+            for c in res["chats"]:
+                tags = ("mention",) if c["mentions"] else ("unread",) if c["unread"] else ()
+                self.tree.insert("", "end", iid=c["id"], values=home_ops.teams_cells(c), tags=tags)
+            kids = self.tree.get_children()
+            if kids:
+                self.tree.selection_set(keep[0] if keep and keep[0] in self.rows else kids[0])
+            else:
+                self.show_lines([("dim", "No chats")])
+            self.say(home_ops.teams_status(res))
+        self.app.run_bg(lambda: teams_ops.summary(latest=5, retry=retry, max_age=max_age), done)
+
+    def show_lines(self, lines: list[tuple[str, str]]) -> None:
+        v = self.view
+        v.configure(state="normal")
+        v.delete("1.0", "end")
+        for tag, text in lines:
+            v.insert("end", text + "\n", tag)
+        v.configure(state="disabled")
+        v.yview_moveto(0)
+
+    def on_select(self) -> None:
+        if self.msg_job is not None:
+            self.after_cancel(self.msg_job)
+        self.msg_job = self.after(300, self._load_messages)
+
+    def _load_messages(self) -> None:
+        self.msg_job = None
+        chat = self.selected()
+        if not chat:
+            return
+        cid = chat["id"]
+        cached = self.msg_cache.get(cid)
+        if cached and cached[0] == chat["time"]:
+            self._show_messages(chat, cached[1])
+            return
+        self.msg_token += 1
+        token = self.msg_token
+        self.show_lines([("dim", "Loading messages...")])
+
+        def done(res):
+            if token != self.msg_token:
+                return
+            if isinstance(res, Exception):
+                self.show_lines(home_ops.teams_error_lines(res, 80, False))
+                return
+            self.msg_cache[cid] = (chat["time"], res)
+            self._show_messages(chat, res)
+        self.app.run_bg(lambda: teams_ops.messages(cid), done)
+
+    def _show_messages(self, chat: dict, msgs: list) -> None:
+        head = [("h", f" {chat['title']} ")]
+        if chat.get("members"):
+            head.append(("dim", "With: " + ", ".join(chat["members"])))
+        self.show_lines(head + home_ops.teams_message_lines(msgs))
+
+    def _poll(self) -> None:
+        self.poll_job = None
+        if self.app.view != "teams":
+            return
+        if self.state == "signin" and teams_ops.auth_state()["state"] in ("signed_in", "failed"):
+            self.reload()
+        self.poll_job = self.after(2000, self._poll)
+
+
 class UsagePane(tk.Frame):
     """Copilot usage report: calls, tokens and premium requests per day, model and folder."""
     PERIODS = (7, 30, 90)
@@ -1091,32 +1279,34 @@ class HomePane(tk.Frame):
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, bg=BLACK)
         self.app, self.loading, self.mon_job, self.last_load = app, False, None, 0.0
+        self.teams_busy = False
         self.fnt = tkfont.Font(font=self.FONT)
         self.data: dict[str, object] = {}
-        self.columnconfigure((0, 1), weight=1, uniform="col")
+        self.columnconfigure(tuple(range(6)), weight=1, uniform="col")
         for r, w in enumerate((2, 3, 10, 5)):
             self.rowconfigure(r, weight=w, uniform=None)
         mon, fri = home_ops.week_range()
         self.order: list[tk.Text] = []
         go = lambda name: (lambda: getattr(self.app, name)())
-        self.mon = self.panel("COPILOT MONITOR  //  RUNNING SESSIONS", LAVENDER, 0, 0, 2, go=go("show_monitor"))
-        self.usage = self.panel("TODAY'S COPILOT USAGE", PERIWINKLE, 1, 0, go=go("show_usage"))
-        self.quick_frame = self.panel("MINDCHUK  //  QUICK ENTRY", PEACH, 1, 1, entry=True, go=go("show_mindchuk"))
+        self.mon = self.panel("COPILOT MONITOR  //  RUNNING SESSIONS", LAVENDER, 0, 0, 6, go=go("show_monitor"))
+        self.usage = self.panel("TODAY'S COPILOT USAGE", PERIWINKLE, 1, 0, 3, go=go("show_usage"))
+        self.quick_frame = self.panel("MINDCHUK  //  QUICK ENTRY", PEACH, 1, 3, 3, entry=True, go=go("show_mindchuk"))
         week = f"{mon:%m-%d} to {fri:%m-%d}"
-        self.cal = {"outlook": self.panel(f"OUTLOOK CALENDAR  //  {week}", ORANGE, 2, 0, go=go("show_outlook")),
-                    "google": self.panel(f"GMAIL CALENDAR  //  {week}", PEACH, 2, 1, go=go("show_google"))}
-        self.mail = {"outlook": self.panel("OUTLOOK INBOX  //  RECENT", ORANGE, 3, 0, go=go("show_outlook")),
-                     "google": self.panel("GMAIL INBOX  //  RECENT", PEACH, 3, 1, go=go("show_google"))}
+        self.cal = {"outlook": self.panel(f"OUTLOOK CALENDAR  //  {week}", ORANGE, 2, 0, 3, go=go("show_outlook")),
+                    "google": self.panel(f"GMAIL CALENDAR  //  {week}", PEACH, 2, 3, 3, go=go("show_google"))}
+        self.mail = {"outlook": self.panel("OUTLOOK INBOX  //  RECENT", ORANGE, 3, 0, 2, go=go("show_outlook")),
+                     "google": self.panel("GMAIL INBOX  //  RECENT", PEACH, 3, 2, 2, go=go("show_google"))}
+        self.teams_box = self.panel("TEAMS CHAT  //  UNREAD + MENTIONS", BLUE, 3, 4, 2, go=go("show_teams"))
         self.status = tk.Label(self, text="", bg=BLACK, fg=BLUE, font=BODY_FONT, anchor="w")
-        self.status.grid(row=4, column=0, columnspan=2, sticky="ew")
-        for t in (self.mon, self.usage, *self.cal.values(), *self.mail.values()):
-            for k, fn in (("r", self.reload), ("n", self.focus_entry)):
+        self.status.grid(row=4, column=0, columnspan=6, sticky="ew")
+        for t in (self.mon, self.usage, *self.cal.values(), *self.mail.values(), self.teams_box):
+            for k, fn in (("r", lambda: self.reload(retry=True)), ("n", self.focus_entry)):
                 t.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
             t.bind("<Configure>", lambda e: self.after_idle(self.render_all))
 
     def panel(self, title: str, color: str, row: int, col: int, span: int = 1, entry: bool = False, go=None):
         f = tk.Frame(self, bg=BLACK)
-        f.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=(0, 6) if col == 0 and span == 1 else 0, pady=(0, 4))
+        f.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=(0, 6) if col + span < 6 else 0, pady=(0, 4))
         lbl = tk.Label(f, text=title, bg=BLACK, fg=color, font=LABEL_FONT, anchor="w", cursor="hand2")
         lbl.pack(fill="x")
         lbl.bind("<Button-1>", lambda e: go())
@@ -1143,9 +1333,10 @@ class HomePane(tk.Frame):
                 t.bind(ev, lambda e: (go(), "break")[1])
             t.configure(cursor="hand2")
         for tag, col in (("h", ORANGE), ("today", PEACH), ("unread", ORANGE), ("dim", LAVENDER), ("err", RED),
-                         ("hdr", LAVENDER)):
+                         ("hdr", LAVENDER), ("mention", RED)):
             t.tag_configure(tag, foreground=col)
         t.tag_configure("hdr", background=LAVENDER, foreground=BLACK)
+        t.tag_configure("mention", foreground=RED, font=(self.FONT[0], self.FONT[1], "bold"))
         t.tag_configure("today", background=ORANGE, foreground=BLACK, font=(self.FONT[0], self.FONT[1], "bold"))
         if entry:
             self.entry = t
@@ -1204,6 +1395,9 @@ class HomePane(tk.Frame):
         if self.app.view != "home":
             return
         self.refresh_monitor()
+        teams = self.data.get("teams")
+        if isinstance(teams, teams_ops.TeamsSignInRequired) and teams_ops.auth_state()["state"] in ("signed_in", "failed"):
+            self.reload_teams()
         if time.time() - self.last_load > 300:
             self.reload()
         self.mon_job = self.after(2000, self._auto)
@@ -1219,9 +1413,9 @@ class HomePane(tk.Frame):
             self.render_monitor()
         self.app.run_bg(live_ops.snapshot, done)
 
-    def reload(self) -> None:
+    def reload(self, retry: bool = False) -> None:
         self.last_load = time.time()
-        self.status.configure(text="Loading Outlook / Gmail / usage...")
+        self.status.configure(text="Loading Outlook / Gmail / Teams / usage...")
         jobs = {"usage": copilot_ops.today_usage,
                 "cal_outlook": lambda: home_ops.week_events(outlook_ops), "cal_google": lambda: home_ops.week_events(google_ops),
                 "mail_outlook": lambda: outlook_ops.mail(8), "mail_google": lambda: google_ops.mail(8)}
@@ -1231,6 +1425,18 @@ class HomePane(tk.Frame):
                 self.render_all()
                 self.status.configure(text="r reload  //  n quick entry  //  monitor refreshes every 2 s, the rest every 5 min")
             self.app.run_bg(fn, done)
+        self.reload_teams(retry)
+
+    def reload_teams(self, retry: bool = False) -> None:
+        if self.teams_busy:
+            return
+        self.teams_busy = True
+
+        def done(res):
+            self.teams_busy = False
+            self.data["teams"] = res
+            self.render_teams()
+        self.app.run_bg(lambda: teams_ops.summary(latest=5, retry=retry), done)
 
     # ---------- render ----------
     def render_all(self) -> None:
@@ -1239,6 +1445,15 @@ class HomePane(tk.Frame):
         for src in ("outlook", "google"):
             self.render_cal(src)
             self.render_mail(src)
+        self.render_teams()
+
+    def render_teams(self) -> None:
+        res = self.data.get("teams")
+        if res is None:
+            return
+        w = self.cols(self.teams_box)
+        self.put(self.teams_box, home_ops.teams_error_lines(res, w, True) if isinstance(res, Exception)
+                 else home_ops.teams_lines(res, w))
 
     def render_monitor(self) -> None:
         t, rows = self.mon, self.data.get("monitor")
@@ -1368,7 +1583,7 @@ class Dashboard(tk.Tk):
                         if v and m(v) != v:
                             w.tag_configure(tag, **{o: m(v)})
             if isinstance(w, ttk.Treeview):
-                for tag in ("behind", "ahead", "bad", "busy"):
+                for tag in ("behind", "ahead", "bad", "busy", "unread", "mention"):
                     v = str(w.tag_configure(tag, "foreground") or "")
                     if v and m(v) != v:
                         w.tag_configure(tag, foreground=m(v))
@@ -1414,10 +1629,11 @@ class Dashboard(tk.Tk):
                ("TERMINAL\n[F2 / T]", PERIWINKLE, self.show_terminal),
                ("MINDCHUK\n[F3 / M]", PEACH, self.show_mindchuk), ("SESSIONS\n[F6 / S]", LAVENDER, self.show_sessions),
                ("USAGE\n[F7 / U]", BLUE, self.show_usage), ("MONITOR\n[F9 / W]", PERIWINKLE, self.show_monitor),
-               ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook), ("GMAIL\n[F11 / I]", PEACH, self.show_google))
+               ("OUTLOOK\n[F10 / O]", ORANGE, self.show_outlook), ("GMAIL\n[F11 / I]", PEACH, self.show_google),
+               ("TEAMS\n[⇧F11 / Y]", BLUE, self.show_teams))
         self.nav_pills = []
         for text, color, cmd in nav:
-            p = Pill(side, text, color, cmd, height=58)
+            p = Pill(side, text, color, cmd, height=54)
             p.pack(fill="x", pady=(0, 4))
             self.nav_pills.append(p)
         Pill(side, "HELP\n[F4 / ?]", BLUE, self.show_help, height=58).pack(side="bottom", fill="x")
@@ -1438,10 +1654,11 @@ class Dashboard(tk.Tk):
         self.monitor = MonitorPane(self.content, self)
         self.outlook = OutlookPane(self.content, self)
         self.google = GooglePane(self.content, self)
+        self.teams = TeamsPane(self.content, self)
         self.home = HomePane(self.content, self)
         self.panes = {"status": main, "terminal": self.terminal, "mindchuk": self.mindchuk,
                       "sessions": self.sessions, "usage": self.usage, "monitor": self.monitor,
-                      "outlook": self.outlook, "google": self.google, "home": self.home}
+                      "outlook": self.outlook, "google": self.google, "teams": self.teams, "home": self.home}
         self.list_title = tk.Label(main, text="SOFTWAREDEVELOPMENT", bg=BLACK, fg=ORANGE, font=LABEL_FONT, anchor="w")
         self.list_title.pack(fill="x")
         self.list_frame = RoundFrame(main, PERIWINKLE, height=300)
@@ -1493,7 +1710,7 @@ class Dashboard(tk.Tk):
     def _bind_keys(self) -> None:
         def on(key, fn):
             def handler(e):
-                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>", "<F10>", "<F11>", "<F12>"):
+                if self.view != "status" and key not in ("<F1>", "<F2>", "<F3>", "<F4>", "<F5>", "<F6>", "<F7>", "<F8>", "<F9>", "<F10>", "<F11>", "<F12>", "<Shift-F11>"):
                     return None  # let the active pane receive typing
                 fn()
                 return "break"
@@ -1519,6 +1736,8 @@ class Dashboard(tk.Tk):
         on("<Key-o>", self.show_outlook)
         on("<F11>", self.show_google)
         on("<Key-i>", self.show_google)
+        on("<Shift-F11>", self.show_teams)
+        on("<Key-y>", self.show_teams)
         on("<Key-w>", self.show_monitor)
         on("<Key-s>", self.show_sessions)
         on("<Key-u>", self.show_usage)
@@ -1545,12 +1764,24 @@ class Dashboard(tk.Tk):
     # ---------- help ----------
     HELP = {
         "home": ("HOME", [
-            ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, and a Mindchuk quick entry"),
-            ("r", "Reload usage, calendars and mail now (monitor refreshes every 2 s, the rest every 5 min)"),
+            ("(what)", "One-screen daily view: running Copilot sessions, today's usage, this work week's Outlook and Gmail calendars, recent inbox mail, Teams unread chats and mentions, and a Mindchuk quick entry"),
+            ("r", "Reload usage, calendars, mail and Teams now (monitor refreshes every 2 s, the rest every 5 min); restarts a failed Teams sign-in"),
             ("n", "Focus the Mindchuk quick entry"),
             ("Ctrl+Enter", "In the quick entry: send it to Mindchuk (or click ADD)"),
             ("Esc", "In the quick entry: back to the monitor (hotkeys work there)"),
-            ("click / Tab + Enter", "Click a pane (or its title) to jump to its tab: monitor, usage, Mindchuk, Outlook, Gmail. Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
+            ("click / Tab + Enter", "Click a pane (or its title) to jump to its tab: monitor, usage, Mindchuk, Outlook, Gmail, Teams. Tab / Shift+Tab cycle the panes, Enter opens the focused one"),
+        ]),
+        "teams": ("MICROSOFT TEAMS (READ-ONLY)", [
+            ("(what)", "Your 1:1, group and meeting chats, newest first. * = unread, @ = unread message mentions you. Nothing is ever sent or marked read"),
+            ("j / k, g / G", "Move through chats (or scroll the messages)"),
+            ("Ctrl+d / Ctrl+u", "Page down / up"),
+            ("l / Enter", "Read the selected chat (focus the messages)"),
+            ("h", "Back to the chat list"),
+            ("Tab", "Switch between list and messages"),
+            ("r", "Reload chats; restarts sign-in if it failed or expired"),
+            ("Esc", "Back to the repo list"),
+            ("(setup)", "~/.lcars_dash/teams_config.json {\"client_id\", \"tenant_id\"}; first use shows a sign-in code for microsoft.com/devicelogin"),
+            ("(sign out)", "Quit the app, then delete ~/.lcars_dash/teams_token.bin (a running app keeps its session until it exits)"),
         ]),
         "status": ("SOFTWAREDEVELOPMENT / HOMEDEV", [
             ("j / k, ↓ / ↑", "Move through repositories (or scroll the summary)"),
@@ -1652,6 +1883,7 @@ class Dashboard(tk.Tk):
         ("F12 / z", "HOME: one-screen daily overview (default)"), ("F1 / d", "SoftwareDevelopment repos"), ("F8 / h", "HomeDev repos (under ~/HomeDev)"), ("F2 / t", "Terminal"), ("F3 / m", "Mindchuk"),
         ("F6 / s", "Copilot Sessions"), ("F7 / u", "Copilot Usage"), ("F9 / w", "Monitor running Copilot sessions"),
         ("F10 / o", "Outlook mail and calendar"), ("F11 / i", "Gmail and Google Calendar"),
+        ("⇧F11 / y", "Microsoft Teams chats (read-only)"),
         ("F4 / ?", "This help"), ("F5 / c", "Cycle colour theme (TNG, DS9, Klingon, Romulan, Vulcan; saved)"),
         ("q", "Quit (not while typing in the terminal)"),
     ]
@@ -1745,6 +1977,10 @@ class Dashboard(tk.Tk):
     def show_google(self) -> None:
         self.switch("google")
         self.google.open()
+
+    def show_teams(self) -> None:
+        self.switch("teams")
+        self.teams.open()
 
     def show_outlook(self) -> None:
         self.switch("outlook")

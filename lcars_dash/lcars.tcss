@@ -19,6 +19,7 @@ Screen { background: $lc-black; color: $lc-peach; }
 #n-monitor { background: $lc-periwinkle; }
 #n-outlook { background: $lc-orange; }
 #n-google { background: $lc-peach; }
+#n-teams { background: $lc-blue; }
 #n-theme { background: $lc-periwinkle; }
 #n-help { background: $lc-blue; margin-bottom: 0; }
 #spacer { height: 1fr; background: $lc-lavender; margin-bottom: 1; }
@@ -36,9 +37,10 @@ StatusView, TerminalView, MindchukView, SessionsView, UsageView, HomeView { heig
 #hm-entry { height: 1fr; border: none; }
 #hm-entry-status { height: 1; color: $lc-blue; padding: 0 1; }
 #hm-mon:focus, #hm-usage:focus, #hm-quick:focus-within, #hm-calbox-outlook:focus, #hm-calbox-google:focus,
-#hm-mail-outlook:focus, #hm-mail-google:focus { border: thick white; background: $lc-orange 25%; border-title-color: $lc-black; border-title-background: $lc-orange; border-title-style: bold; }
+#hm-mail-outlook:focus, #hm-mail-google:focus, #hm-teams:focus { border: thick white; background: $lc-orange 25%; border-title-color: $lc-black; border-title-background: $lc-orange; border-title-style: bold; }
 #hm-calbox-outlook, #hm-mail-outlook { border: round $lc-orange; }
 #hm-calbox-google, #hm-mail-google { border: round $lc-peach; }
+#hm-teams { border: round $lc-blue; }
 
 #list-title, #detail-title, .view-title { color: $lc-orange; text-style: bold; height: 1; margin-top: 1; }
 .view-status { height: 1; color: $lc-blue; }
