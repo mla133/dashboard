@@ -1020,7 +1020,7 @@ class MonitorPane(tk.Frame):
     def set_tabs(self, name_w: int, folder_w: int) -> None:
         """Pixel tab stops keep columns aligned; session and folder widths follow the longest value."""
         stops, x = [], 0
-        for chars in (3, 36, name_w, folder_w, 7, 8, 11, 8):
+        for chars in (3, 36, 42, name_w, folder_w, 7, 8, 11, 8):
             x += chars * self.fnt.measure("0")
             stops.append(x)
         self.tab_end = x
@@ -1064,11 +1064,12 @@ class MonitorPane(tk.Frame):
         t.configure(state="normal")
         t.delete("1.0", "end")
         self.set_tabs(max([7] + [len(r["name"]) for r in rows]) + 2, max([6] + [len(r["folder"]) for r in rows]) + 2)
-        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tAIC\tPID\tACTIVITY (OLD→NOW)\n", "h")
+        t.insert("end", " \tSTATE\tLAST PROMPT\tSESSION\tFOLDER\tLAST\tEVENTS\tAIC\tPID\tACTIVITY (OLD→NOW)\n", "h")
         for r in rows:
             mode = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
             t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}", f"i_{r['state']}")
             t.insert("end", f"\t{live_ops.state_text(r)[:35]}\t", f"m_{mode}")
+            t.insert("end", f"{live_ops.short(r['prompt'], 40)}\t")
             t.insert("end", f"{r['name']}\t{r['folder']}\t")
             t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['aic']:,.2f}\t{r['pid']}\t")
             t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", f"m_{mode}")

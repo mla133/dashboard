@@ -150,6 +150,27 @@ def aic_by_session(ids: list[str]) -> dict[str, float]:
         return {}
 
 
+def last_prompts(ids: list[str]) -> dict[str, str]:
+    """Most recent user message per session id, from the Copilot session store."""
+    if not ids:
+        return {}
+    try:
+        with sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True, timeout=2) as c:
+            marks = ",".join("?" * len(ids))
+            return {sid: msg or "" for sid, msg in c.execute(
+                f"SELECT t.session_id, t.user_message FROM turns t JOIN "
+                f"(SELECT session_id, max(turn_index) m FROM turns WHERE session_id IN ({marks}) GROUP BY session_id) x "
+                f"ON x.session_id = t.session_id AND x.m = t.turn_index", ids)}
+    except sqlite3.Error:
+        return {}
+
+
+def short(text: str, width: int) -> str:
+    """Collapse whitespace and truncate to width with an ellipsis."""
+    text = " ".join((text or "").split())
+    return text if len(text) <= width else text[:width - 1] + "…"
+
+
 def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) -> list[dict]:
     """One row per running session: state, last activity and per-bucket event counts (oldest first)."""
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
@@ -157,6 +178,7 @@ def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) 
     rows = []
     live = running()
     aic = aic_by_session([s["id"] for s in live])
+    prompts = last_prompts([s["id"] for s in live])
     for s in live:
         counts = [0] * n
         state, detail, age, mode = "IDLE", "", None, "interactive"
@@ -175,7 +197,7 @@ def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) 
         cwd = s.get("cwd", "")
         rows.append({"id": s["id"], "pid": s["pid"], "name": s.get("name") or "(unnamed)",
                      "folder": Path(cwd).name if cwd else "?", "cwd": cwd, "state": state, "detail": detail,
-                     "mode": mode, "age": age, "counts": counts, "total": sum(counts), "aic": aic.get(s["id"], 0.0)})
+                     "mode": mode, "age": age, "counts": counts, "total": sum(counts), "aic": aic.get(s["id"], 0.0), "prompt": prompts.get(s["id"], "")})
     rows.sort(key=lambda r: (r["age"] is None, r["age"] or 0))
     return rows
 

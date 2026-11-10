@@ -640,7 +640,7 @@ class MonitorView(Navigable):
 
     def on_mount(self) -> None:
         t = self.query_one("#mon-table", DataTable)
-        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD→NOW)", "LAST", "EVENTS", "AIC", "PID"):
+        for label in ("", "STATE", "LAST PROMPT", "SESSION", "FOLDER", "ACTIVITY (OLD→NOW)", "LAST", "EVENTS", "AIC", "PID"):
             t.add_column(label)
 
     def say(self, msg: str) -> None:
@@ -679,7 +679,7 @@ class MonitorView(Navigable):
             mode_col = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
             t.add_row(Text(live_ops.ICONS.get(r["state"], "?"), style=live_ops.ICON_COLOR.get(r["state"], "white")),
                       Text(live_ops.state_text(r)[:35], style=mode_col),
-                      r["name"], r["folder"],
+                      live_ops.short(r["prompt"], 70), r["name"], r["folder"],
                       Text(live_ops.sparkline(r["counts"]), style=mode_col),
                       live_ops.age_label(r["age"]), str(r["total"]), f"{r['aic']:,.2f}", str(r["pid"]))
         if self.rows:
