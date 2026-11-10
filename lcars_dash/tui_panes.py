@@ -511,14 +511,41 @@ class SessionsView(ListTextView):
 
 class OutlookView(ListTextView):
     PREFIX = "ol"
-    NAME, ops, SOURCE = "OUTLOOK", outlook_ops, "Outlook"
+    NAME, ops, SOURCE, TRASH_NAME = "OUTLOOK", outlook_ops, "Outlook", "Deleted Items"
     TITLE = "OUTLOOK  //  CALENDAR"
     BINDINGS = [Binding("v", "toggle_kind", "Mail/Calendar"), Binding("r", "reload", "Reload"),
-                Binding("a", "toggle_unread", "Unread only")]
+                Binding("a", "toggle_unread", "Unread only"), Binding("d", "trash", "Delete")]
 
     def __init__(self, **kw):
         super().__init__(**kw)
         self.kind, self.unread_only, self.rows, self.token = "calendar", False, {}, 0
+
+    def current(self) -> dict | None:
+        k = self.selected_key()
+        return self.rows.get(k) if k and self.kind == "mail" else None
+
+    def act(self, fn, doing: str, drop: bool) -> None:
+        r = self.current()
+        if not r:
+            self.say("Select a message first (v switches to mail)")
+            return
+        self.say(doing)
+
+        def done(_res):
+            if drop:
+                self.action_reload()
+            self.say(f"{doing[:-3]} done")
+        self.bg(lambda: fn(r), done)
+
+    def action_trash(self) -> None:
+        r = self.current()
+        if not r:
+            return
+
+        def go(ok):
+            if ok:
+                self.act(lambda m: self.ops.trash(m["id"]), "Deleting...", True)
+        self.app.push_screen(ConfirmScreen("DELETE MESSAGE", f"Move to {self.TRASH_NAME}?\n\n{r['subject']}"), go)
 
     def open(self) -> None:
         self.table.focus()
@@ -578,40 +605,13 @@ class OutlookView(ListTextView):
 
 class GoogleView(OutlookView):
     PREFIX = "gm"
-    NAME, ops, SOURCE = "GMAIL", google_ops, "Google"
+    NAME, ops, SOURCE, TRASH_NAME = "GMAIL", google_ops, "Google", "Trash"
     TITLE = "GMAIL  //  CALENDAR"
-    BINDINGS = [Binding("x", "archive", "Archive"), Binding("d", "trash", "Trash"),
-                Binding("u", "toggle_read", "Read/Unread"), Binding("e", "reply", "Reply draft")]
-
-    def current(self) -> dict | None:
-        k = self.selected_key()
-        return self.rows.get(k) if k and self.kind == "mail" else None
-
-    def act(self, fn, doing: str, drop: bool) -> None:
-        r = self.current()
-        if not r:
-            self.say("Select a message first (v switches to mail)")
-            return
-        self.say(doing)
-
-        def done(_res):
-            if drop:
-                self.action_reload()
-            self.say(f"{doing[:-3]} done")
-        self.bg(lambda: fn(r), done)
+    BINDINGS = [Binding("x", "archive", "Archive"), Binding("u", "toggle_read", "Read/Unread"),
+                Binding("e", "reply", "Reply draft")]
 
     def action_archive(self) -> None:
         self.act(lambda r: google_ops.archive(r["id"]), "Archiving...", True)
-
-    def action_trash(self) -> None:
-        r = self.current()
-        if not r:
-            return
-
-        def go(ok):
-            if ok:
-                self.act(lambda m: google_ops.trash(m["id"]), "Trashing...", True)
-        self.app.push_screen(ConfirmScreen("TRASH MESSAGE", f"Move to Trash?\n\n{r['subject']}"), go)
 
     def action_toggle_read(self) -> None:
         r = self.current()
@@ -640,7 +640,7 @@ class MonitorView(Navigable):
 
     def on_mount(self) -> None:
         t = self.query_one("#mon-table", DataTable)
-        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD→NOW)", "LAST", "EVENTS", "PID"):
+        for label in ("", "STATE", "SESSION", "FOLDER", "ACTIVITY (OLD→NOW)", "LAST", "EVENTS", "AIC", "PID"):
             t.add_column(label)
 
     def say(self, msg: str) -> None:
@@ -679,9 +679,9 @@ class MonitorView(Navigable):
             mode_col = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
             t.add_row(Text(live_ops.ICONS.get(r["state"], "?"), style=live_ops.ICON_COLOR.get(r["state"], "white")),
                       Text(live_ops.state_text(r)[:35], style=mode_col),
-                      r["name"][:34], r["folder"][:22],
+                      r["name"], r["folder"],
                       Text(live_ops.sparkline(r["counts"]), style=mode_col),
-                      live_ops.age_label(r["age"]), str(r["total"]), str(r["pid"]))
+                      live_ops.age_label(r["age"]), str(r["total"]), f"{r['aic']:,.2f}", str(r["pid"]))
         if self.rows:
             t.move_cursor(row=min(keep, len(self.rows) - 1))
         n = sum(r["state"] == "RUNNING" for r in self.rows)

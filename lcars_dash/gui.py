@@ -697,7 +697,7 @@ class SessionsPane(tk.Frame):
 
 class OutlookPane(tk.Frame):
     """Read-only Outlook calendar (next 14 days) and inbox, via desktop Outlook."""
-    NAME, ops, SOURCE = "OUTLOOK", outlook_ops, "Outlook"
+    NAME, ops, SOURCE, TRASH_NAME = "OUTLOOK", outlook_ops, "Outlook", "Deleted Items"
 
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, bg=BLACK)
@@ -737,7 +737,7 @@ class OutlookPane(tk.Frame):
         self.tree.bind("<FocusIn>", lambda e: (self.list_frame.highlight(True), self.text_frame.highlight(False)))
         self.view.bind("<FocusIn>", lambda e: (self.list_frame.highlight(False), self.text_frame.highlight(True)))
         self.view.bind("<Button-1>", lambda e: self.view.focus_set())
-        for k, fn in (("v", self.toggle_kind), ("r", self.reload), ("a", self.toggle_unread),
+        for k, fn in (("v", self.toggle_kind), ("r", self.reload), ("a", self.toggle_unread), ("d", self.trash),
                       ("j", lambda: self.move(1)), ("k", lambda: self.move(-1)),
                       ("g", lambda: self.move("top")), ("G", lambda: self.move("bottom")),
                       ("l", lambda: self.view.focus_set()), ("h", lambda: self.tree.focus_set()),
@@ -745,6 +745,35 @@ class OutlookPane(tk.Frame):
             for w in (self.tree, self.view):
                 w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
         bind_tab(self.tree, self.view)
+
+    def current(self) -> dict | None:
+        sel = self.tree.selection()
+        return self.rows.get(sel[0]) if sel and self.kind == "mail" else None
+
+    def act(self, fn, doing: str, drop: bool) -> None:
+        r = self.current()
+        if not r:
+            self.say("Select a message first (v switches to mail)")
+            return
+        self.say(doing)
+
+        def done(res):
+            if isinstance(res, Exception):
+                self.say(f"Error: {res}")
+                return
+            if drop and r["id"] in self.rows:
+                nxt = self.tree.next(r["id"]) or self.tree.prev(r["id"])
+                self.tree.delete(r["id"])
+                del self.rows[r["id"]]
+                if nxt:
+                    self.tree.selection_set(nxt)
+            self.say(f"{doing[:-3]} done")
+        self.app.run_bg(lambda: fn(r), done)
+
+    def trash(self) -> None:
+        r = self.current()
+        if r and messagebox.askyesno("Delete message", f"Move to {self.TRASH_NAME}?\n\n{r['subject']}", parent=self):
+            self.act(lambda m: self.ops.trash(m["id"]), "Deleting...", True)
 
     def say(self, msg: str) -> None:
         self.status.configure(text=msg)
@@ -830,45 +859,16 @@ class OutlookPane(tk.Frame):
 
 class GooglePane(OutlookPane):
     """Gmail inbox (archive, trash, mark unread, reply draft) and primary Google Calendar."""
-    NAME, ops, SOURCE = "GMAIL", google_ops, "Google"
+    NAME, ops, SOURCE, TRASH_NAME = "GMAIL", google_ops, "Google", "Trash"
 
     def __init__(self, parent, app: "Dashboard"):
         super().__init__(parent, app)
-        for k, fn in (("x", self.archive), ("d", self.trash), ("u", self.toggle_read), ("e", self.reply)):
+        for k, fn in (("x", self.archive), ("u", self.toggle_read), ("e", self.reply)):
             for w in (self.tree, self.view):
                 w.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
 
-    def current(self) -> dict | None:
-        sel = self.tree.selection()
-        return self.rows.get(sel[0]) if sel and self.kind == "mail" else None
-
-    def act(self, fn, doing: str, drop: bool) -> None:
-        r = self.current()
-        if not r:
-            self.say("Select a message first (v switches to mail)")
-            return
-        self.say(doing)
-
-        def done(res):
-            if isinstance(res, Exception):
-                self.say(f"Error: {res}")
-                return
-            if drop and r["id"] in self.rows:
-                nxt = self.tree.next(r["id"]) or self.tree.prev(r["id"])
-                self.tree.delete(r["id"])
-                del self.rows[r["id"]]
-                if nxt:
-                    self.tree.selection_set(nxt)
-            self.say(f"{doing[:-3]} done")
-        self.app.run_bg(lambda: fn(r), done)
-
     def archive(self) -> None:
         self.act(lambda r: google_ops.archive(r["id"]), "Archiving...", True)
-
-    def trash(self) -> None:
-        r = self.current()
-        if r and messagebox.askyesno("Trash message", f"Move to Trash?\n\n{r['subject']}", parent=self):
-            self.act(lambda m: google_ops.trash(m["id"]), "Trashing...", True)
 
     def toggle_read(self) -> None:
         r = self.current()
@@ -1005,14 +1005,8 @@ class MonitorPane(tk.Frame):
         self.frame.highlight(True)
         self.text.tag_configure("h", background=LAVENDER, foreground=BLACK, font=BODY_FONT, spacing1=8, spacing3=2)
         # pixel tab stops keep columns aligned even when block glyphs fall back to a wider font
-        fnt = tkfont.Font(font=BODY_FONT)
-        stops, x = [], 0
-        for w in (3 * fnt.measure("0"), 36 * fnt.measure("0"), 28 * fnt.measure("0"), 18 * fnt.measure("0"),
-                  7 * fnt.measure("0"), 8 * fnt.measure("0"), 8 * fnt.measure("0")):
-            x += w
-            stops.append(x)
-        self.tab_end = x
-        self.text.configure(tabs=tuple(stops))
+        self.fnt = tkfont.Font(font=BODY_FONT)
+        self.set_tabs(28, 18)
         for state, col in live_ops.ICON_COLOR.items():
             self.text.tag_configure(f"i_{state}", foreground=col)
         for col in (*live_ops.MODE_COLOR.values(), live_ops.REGULAR_COLOR):
@@ -1022,6 +1016,15 @@ class MonitorPane(tk.Frame):
         self.status.pack(fill="x")
         for k, fn in (("r", self.refresh), ("Escape", app.show_status)):
             self.text.bind(f"<Key-{k}>", lambda e, f=fn: (f(), "break")[1])
+
+    def set_tabs(self, name_w: int, folder_w: int) -> None:
+        """Pixel tab stops keep columns aligned; session and folder widths follow the longest value."""
+        stops, x = [], 0
+        for chars in (3, 36, name_w, folder_w, 7, 8, 11, 8):
+            x += chars * self.fnt.measure("0")
+            stops.append(x)
+        self.tab_end = x
+        self.text.configure(tabs=tuple(stops))
 
     def open(self) -> None:
         self.text.focus_set()
@@ -1060,13 +1063,14 @@ class MonitorPane(tk.Frame):
         top = t.yview()[0]
         t.configure(state="normal")
         t.delete("1.0", "end")
-        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tPID\tACTIVITY (OLD→NOW)\n", "h")
+        self.set_tabs(max([7] + [len(r["name"]) for r in rows]) + 2, max([6] + [len(r["folder"]) for r in rows]) + 2)
+        t.insert("end", " \tSTATE\tSESSION\tFOLDER\tLAST\tEVENTS\tAIC\tPID\tACTIVITY (OLD→NOW)\n", "h")
         for r in rows:
             mode = live_ops.MODE_COLOR.get(r["mode"], live_ops.REGULAR_COLOR)
             t.insert("end", f" {live_ops.ICONS.get(r['state'], '?')}", f"i_{r['state']}")
             t.insert("end", f"\t{live_ops.state_text(r)[:35]}\t", f"m_{mode}")
-            t.insert("end", f"{r['name'][:26]}\t{r['folder'][:16]}\t")
-            t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['pid']}\t")
+            t.insert("end", f"{r['name']}\t{r['folder']}\t")
+            t.insert("end", f"{live_ops.age_label(r['age'])}\t{r['total']}\t{r['aic']:,.2f}\t{r['pid']}\t")
             t.insert("end", f"{live_ops.sparkline(r['counts'][-self.bars():])}\n", f"m_{mode}")
         if not rows:
             t.insert("end", "\n No running Copilot CLI sessions found.\n", "dim")
@@ -1346,7 +1350,8 @@ class Dashboard(tk.Tk):
             ("j / k, g / G", "Move through events or messages (or scroll the details)"),
             ("v", "Switch between Calendar (next 14 days) and Mail (inbox)"),
             ("a", "Mail: show unread only"),
-            ("r", "Reload from desktop Outlook (read-only)"),
+            ("d", "Mail: delete the selected message (asks first; goes to Deleted Items)"),
+            ("r", "Reload from desktop Outlook"),
             ("l / h", "Focus the details / the list"),
         ]),
         "google": ("GMAIL / CALENDAR", [
@@ -1374,6 +1379,7 @@ class Dashboard(tk.Tk):
             ("(what)", "One row per running Copilot CLI session; bars = activity events per 20 s over the last 10 min (oldest → newest)"),
             ("STATE", "Icon: ● RUNNING green, ◐ WAITING FOR INPUT yellow (permission prompt, question, or silent 45 s+), ✖ ERROR red (model call failed), ○ IDLE white"),
             ("(text colour)", "Mode: plan = blue, autopilot = purple, regular = white"),
+            ("AIC", "Total AIC (nano-AIC / 1e9) the session has used so far, from the session store"),
             ("r", "Refresh now (auto-refreshes every 1 s)"),
             ("Esc", "Return to the repo list"),
         ]),

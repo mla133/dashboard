@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import ctypes
 import re
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
 STATE_DIR = Path.home() / ".copilot" / "session-state"
+DB = Path.home() / ".copilot" / "session-store.db"
 TAIL_BYTES = 2_000_000
 BLOCKS = "▁▂▃▄▅▆▇█"
 NOISE = ("hook.start", "hook.end")  # emitted around every tool call; would swamp the activity signal
@@ -134,12 +136,28 @@ def _mode(events) -> str:
     return "interactive"
 
 
+def aic_by_session(ids: list[str]) -> dict[str, float]:
+    """Total AIC (total_nano_aiu / 1e9) per session id, from the Copilot session store."""
+    if not ids:
+        return {}
+    try:
+        with sqlite3.connect(f"file:{DB.as_posix()}?mode=ro", uri=True, timeout=2) as c:
+            marks = ",".join("?" * len(ids))
+            return {sid: (nano or 0) / 1e9 for sid, nano in c.execute(
+                f"SELECT session_id, sum(total_nano_aiu) FROM assistant_usage_events "
+                f"WHERE session_id IN ({marks}) GROUP BY session_id", ids)}
+    except sqlite3.Error:
+        return {}
+
+
 def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) -> list[dict]:
     """One row per running session: state, last activity and per-bucket event counts (oldest first)."""
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
     n = window_s // bucket_s
     rows = []
-    for s in running():
+    live = running()
+    aic = aic_by_session([s["id"] for s in live])
+    for s in live:
         counts = [0] * n
         state, detail, age, mode = "IDLE", "", None, "interactive"
         try:
@@ -157,7 +175,7 @@ def snapshot(window_s: int = 600, bucket_s: int = 20, now: float | None = None) 
         cwd = s.get("cwd", "")
         rows.append({"id": s["id"], "pid": s["pid"], "name": s.get("name") or "(unnamed)",
                      "folder": Path(cwd).name if cwd else "?", "cwd": cwd, "state": state, "detail": detail,
-                     "mode": mode, "age": age, "counts": counts, "total": sum(counts)})
+                     "mode": mode, "age": age, "counts": counts, "total": sum(counts), "aic": aic.get(s["id"], 0.0)})
     rows.sort(key=lambda r: (r["age"] is None, r["age"] or 0))
     return rows
 

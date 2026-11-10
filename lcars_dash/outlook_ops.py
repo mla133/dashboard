@@ -50,6 +50,16 @@ def mail(limit: int = 50, unread_only: bool = False) -> list[dict]:
         raise OutlookError(str(e)) from e
 
 
+def trash(entry_id: str) -> None:
+    """Move a message to Deleted Items (recoverable from Outlook)."""
+    try:
+        _namespace().GetItemFromID(entry_id).Delete()
+    except OutlookError:
+        raise
+    except Exception as e:
+        raise OutlookError(str(e)) from e
+
+
 def events(days: int = 7) -> list[dict]:
     try:
         items = _namespace().GetDefaultFolder(CALENDAR).Items
